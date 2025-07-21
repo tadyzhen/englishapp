@@ -724,7 +724,7 @@ class _WordQuizPageState extends State<WordQuizPage> {
                                 ),
                                 const SizedBox(height: 24),
                                 AnimatedSwitcher(
-                                  duration: const Duration(milliseconds: 200),
+                                  duration: const Duration(milliseconds: 80),
                                   child: showChinese
                                       ? Text(
                                           words[currentIndex].chinese,
@@ -928,80 +928,71 @@ class _QuizPageState extends State<QuizPage> {
                     ),
                   ),
                   const SizedBox(height: 32),
-                  LayoutBuilder(
-                    builder: (context, constraints) {
-                      // 預留題目高度 60、解釋高度 60、按鈕高度 70、padding 32
-                      final double reserved = 60 + 60 + 70 + 32;
-                      final double gridHeight = (constraints.maxHeight - reserved).clamp(200, 500);
-                      return SizedBox(
-                        height: gridHeight,
-                        child: GridView.count(
-                          crossAxisCount: 2,
-                          mainAxisSpacing: 12,
-                          crossAxisSpacing: 12,
-                          childAspectRatio: 1.15,
-                          physics: const NeverScrollableScrollPhysics(),
-                          shrinkWrap: true,
-                          padding: EdgeInsets.zero,
-                          children: List.generate(4, (i) {
-                            final opt = options[i];
-                            final isCorrect = i == correctIdx;
-                            final isSelected = selected == i;
-                            return GestureDetector(
-                              onTap: answered
-                                  ? null
-                                  : () {
-                                      setState(() {
-                                        userAnswers.add(i);
-                                        if (i == correctIdx) score++;
-                                      });
-                                    },
-                              child: AnimatedContainer(
-                                duration: const Duration(milliseconds: 200),
-                                decoration: BoxDecoration(
-                                  color: isSelected
-                                      ? (isCorrect ? Colors.green[300] : Colors.red[300])
-                                      : Theme.of(context).cardColor,
-                                  borderRadius: BorderRadius.circular(18),
-                                  border: Border.all(
+                  Expanded(
+                    child: GridView.count(
+                      crossAxisCount: 2,
+                      mainAxisSpacing: 12,
+                      crossAxisSpacing: 12,
+                      childAspectRatio: 1.15,
+                      physics: const NeverScrollableScrollPhysics(),
+                      padding: EdgeInsets.zero,
+                      children: List.generate(4, (i) {
+                        final opt = options[i];
+                        final isCorrect = i == correctIdx;
+                        final isSelected = selected == i;
+                        return GestureDetector(
+                          onTap: answered
+                              ? null
+                              : () {
+                                  setState(() {
+                                    userAnswers.add(i);
+                                    if (i == correctIdx) score++;
+                                  });
+                                },
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 200),
+                            decoration: BoxDecoration(
+                              color: isSelected
+                                  ? (isCorrect ? Colors.green[300] : Colors.red[300])
+                                  : Theme.of(context).cardColor,
+                              borderRadius: BorderRadius.circular(18),
+                              border: Border.all(
+                                color: isSelected
+                                    ? (isCorrect ? Colors.green : Colors.red)
+                                    : Colors.grey[300]!,
+                                width: 2,
+                              ),
+                              boxShadow: [
+                                if (isSelected)
+                                  BoxShadow(
+                                    color: (isCorrect ? Colors.green : Colors.red).withOpacity(0.2),
+                                    blurRadius: 8,
+                                    offset: const Offset(0, 4),
+                                  ),
+                              ],
+                            ),
+                            margin: EdgeInsets.zero,
+                            padding: const EdgeInsets.all(8),
+                            child: Center(
+                              child: FittedBox(
+                                fit: BoxFit.contain,
+                                child: Text(
+                                  widget.type == 'ch2en' ? opt.english : opt.chinese,
+                                  style: TextStyle(
+                                    fontSize: 36,
+                                    fontWeight: FontWeight.bold,
                                     color: isSelected
-                                        ? (isCorrect ? Colors.green : Colors.red)
-                                        : Colors.grey[300]!,
-                                    width: 2,
+                                        ? Colors.black
+                                        : Theme.of(context).textTheme.bodyLarge?.color,
                                   ),
-                                  boxShadow: [
-                                    if (isSelected)
-                                      BoxShadow(
-                                        color: (isCorrect ? Colors.green : Colors.red).withOpacity(0.2),
-                                        blurRadius: 8,
-                                        offset: const Offset(0, 4),
-                                      ),
-                                  ],
-                                ),
-                                margin: EdgeInsets.zero,
-                                padding: const EdgeInsets.all(8),
-                                child: Center(
-                                  child: FittedBox(
-                                    fit: BoxFit.contain,
-                                    child: Text(
-                                      widget.type == 'ch2en' ? opt.english : opt.chinese,
-                                      style: TextStyle(
-                                        fontSize: 36,
-                                        fontWeight: FontWeight.bold,
-                                        color: isSelected
-                                            ? Colors.black
-                                            : Theme.of(context).textTheme.bodyLarge?.color,
-                                      ),
-                                      textAlign: TextAlign.center,
-                                    ),
-                                  ),
+                                  textAlign: TextAlign.center,
                                 ),
                               ),
-                            );
-                          }),
-                        ),
-                      );
-                    },
+                            ),
+                          ),
+                        );
+                      }),
+                    ),
                   ),
                   const SizedBox(height: 16),
                   if (answered)
