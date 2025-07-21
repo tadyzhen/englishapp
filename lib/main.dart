@@ -8,7 +8,8 @@ import 'dart:math' as math;
 // ========== AppSettings 狀態管理 ==========
 class AppSettings extends ChangeNotifier {
   ThemeMode themeMode;
-  AppSettings({required this.themeMode});
+  bool autoSpeak;
+  AppSettings({required this.themeMode, this.autoSpeak = false});
 
   void setThemeMode(ThemeMode mode) async {
     themeMode = mode;
@@ -17,11 +18,20 @@ class AppSettings extends ChangeNotifier {
     prefs.setString('themeMode', mode == ThemeMode.dark ? 'dark' : 'light');
   }
 
+  void setAutoSpeak(bool value) async {
+    autoSpeak = value;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    prefs.setBool('autoSpeak', value);
+  }
+
   static Future<AppSettings> load() async {
     final prefs = await SharedPreferences.getInstance();
     String theme = prefs.getString('themeMode') ?? 'light';
+    bool autoSpeak = prefs.getBool('autoSpeak') ?? false;
     return AppSettings(
       themeMode: theme == 'dark' ? ThemeMode.dark : ThemeMode.light,
+      autoSpeak: autoSpeak,
     );
   }
 }
@@ -171,6 +181,18 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
                   ),
                 ],
               ),
+              const SizedBox(height: 16),
+              // 自動播放語音
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text('自動播放語音', style: TextStyle(fontSize: 18)),
+                  Switch(
+                    value: settings.autoSpeak,
+                    onChanged: (v) => settings.setAutoSpeak(v),
+                  ),
+                ],
+              ),
             ],
           ),
           actions: [
@@ -190,7 +212,7 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
     final Color mainButtonColor = Theme.of(context).colorScheme.primary;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('學測英文7000單'),
+        title: const Text('高嚴凱是給學測7000單'),
         actions: [
           IconButton(
             icon: const Icon(Icons.star),
@@ -436,6 +458,10 @@ class _WordQuizPageState extends State<WordQuizPage> {
 
   Future<void> speakWord(String word) async {
     if (isSpeaking) return;
+    // 如果單字包含 /，不發音
+    if (word.contains('/')) {
+      return;
+    }
     setState(() { isSpeaking = true; });
     try {
       await flutterTts.stop();
@@ -481,6 +507,12 @@ class _WordQuizPageState extends State<WordQuizPage> {
       showChinese = false;
       isLoading = false;
     });
+    // 自動播放語音
+    final settings = SettingsProvider.of(context);
+    if (settings.autoSpeak && words.isNotEmpty && !isFinished) {
+      await Future.delayed(const Duration(milliseconds: 300));
+      speakWord(words[currentIndex].english);
+    }
   }
 
   Future<void> handleSwipe(bool known) async {
@@ -501,6 +533,12 @@ class _WordQuizPageState extends State<WordQuizPage> {
         isFinished = knownWords.length >= words.length;
       }
     });
+    // 自動播放語音
+    final settings = SettingsProvider.of(context);
+    if (settings.autoSpeak && !isFinished && currentIndex < words.length) {
+      await Future.delayed(const Duration(milliseconds: 300));
+      speakWord(words[currentIndex].english);
+    }
   }
 
   Future<void> addToFavorite(String word) async {
@@ -519,7 +557,7 @@ class _WordQuizPageState extends State<WordQuizPage> {
   Widget build(BuildContext context) {
     if (isLoading) {
       return Scaffold(
-        appBar: AppBar(title: const Text('學測7000單字')),
+        appBar: AppBar(title: const Text('高嚴凱是給學測7000單')),
         body: const Center(child: CircularProgressIndicator()),
       );
     }
@@ -531,7 +569,7 @@ class _WordQuizPageState extends State<WordQuizPage> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('學測7000單字'),
+        title: const Text('高嚴凱是給學測7000單'),
       ),
       body: Stack(
         children: [
