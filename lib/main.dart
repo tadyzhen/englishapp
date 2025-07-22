@@ -37,17 +37,19 @@ class AppSettings extends ChangeNotifier {
 }
 
 class SettingsProvider extends InheritedNotifier<AppSettings> {
-  const SettingsProvider({super.key, required super.notifier, required super.child});
-  static AppSettings of(BuildContext context) => context.dependOnInheritedWidgetOfExactType<SettingsProvider>()!.notifier!;
+  const SettingsProvider({
+    super.key,
+    required super.notifier,
+    required super.child,
+  });
+  static AppSettings of(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<SettingsProvider>()!.notifier!;
 }
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final settings = await AppSettings.load();
-  runApp(SettingsProvider(
-    notifier: settings,
-    child: const EnglishApp(),
-  ));
+  runApp(SettingsProvider(notifier: settings, child: const EnglishApp()));
 }
 
 class EnglishApp extends StatelessWidget {
@@ -118,23 +120,35 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
   List<Word> favoriteWords = [];
 
   Future<void> resetAllProgress() async {
-    setState(() { isResetting = true; });
+    setState(() {
+      isResetting = true;
+    });
     final prefs = await SharedPreferences.getInstance();
     for (var level in levels) {
       await prefs.remove('known_$level');
     }
-    setState(() { isResetting = false; });
+    setState(() {
+      isResetting = false;
+    });
     if (mounted) {
       showDialog(
         context: context,
         builder: (ctx) => AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          title: const Text('已重置', style: TextStyle(fontWeight: FontWeight.bold)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          title: const Text(
+            '已重置',
+            style: TextStyle(fontWeight: FontWeight.bold),
+          ),
           content: const Text('所有熟知記錄已重置'),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(ctx).pop(),
-              child: const Text('確定', style: TextStyle(color: Color(0xFF007AFF))),
+              child: const Text(
+                '確定',
+                style: TextStyle(color: Color(0xFF007AFF)),
+              ),
             ),
           ],
         ),
@@ -147,7 +161,9 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
     final favs = prefs.getStringList('favorite_words') ?? [];
     String data = await rootBundle.loadString('assets/words.json');
     List<dynamic> jsonResult = json.decode(data);
-    List<Word> allWords = jsonResult.map((item) => Word.fromJson(item)).toList();
+    List<Word> allWords = jsonResult
+        .map((item) => Word.fromJson(item))
+        .toList();
     setState(() {
       favoriteWords = allWords.where((w) => favs.contains(w.english)).toList();
     });
@@ -159,8 +175,13 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
       context: context,
       builder: (ctx) {
         return AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          title: const Text('設定', style: TextStyle(fontWeight: FontWeight.bold)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          title: const Text(
+            '設定',
+            style: TextStyle(fontWeight: FontWeight.bold),
+          ),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -172,7 +193,10 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
                   DropdownButton<ThemeMode>(
                     value: settings.themeMode,
                     items: const [
-                      DropdownMenuItem(value: ThemeMode.light, child: Text('亮')), 
+                      DropdownMenuItem(
+                        value: ThemeMode.light,
+                        child: Text('亮'),
+                      ),
                       DropdownMenuItem(value: ThemeMode.dark, child: Text('暗')),
                     ],
                     onChanged: (mode) {
@@ -198,7 +222,10 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
           actions: [
             TextButton(
               onPressed: () => Navigator.of(ctx).pop(),
-              child: const Text('關閉', style: TextStyle(color: Color(0xFF007AFF))),
+              child: const Text(
+                '關閉',
+                style: TextStyle(color: Color(0xFF007AFF)),
+              ),
             ),
           ],
         );
@@ -222,7 +249,9 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
               if (!mounted) return;
               Navigator.push(
                 context,
-                MaterialPageRoute(builder: (_) => FavoritePage(favoriteWords: favoriteWords)),
+                MaterialPageRoute(
+                  builder: (_) => FavoritePage(favoriteWords: favoriteWords),
+                ),
               ).then((_) => loadFavoriteWords());
             },
           ),
@@ -252,7 +281,9 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Theme.of(context).colorScheme.primary,
                       foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(18),
+                      ),
                       padding: const EdgeInsets.symmetric(vertical: 16),
                     ),
                     onPressed: () async {
@@ -279,7 +310,9 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
                       if (type != null) {
                         Navigator.push(
                           context,
-                          MaterialPageRoute(builder: (_) => QuizPage(type: type)),
+                          MaterialPageRoute(
+                            builder: (_) => QuizPage(type: type),
+                          ),
                         );
                       }
                     },
@@ -329,7 +362,8 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
                           color: Theme.of(context).brightness == Brightness.dark
                               ? const Color(0xFF444444)
                               : const Color(0xFFE5E5EA),
-                          width: 1.2),
+                          width: 1.2,
+                        ),
                       ),
                       child: Center(
                         child: FittedBox(
@@ -339,9 +373,14 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
                             style: TextStyle(
                               fontSize: 28,
                               fontWeight: FontWeight.w600,
-                              color: Theme.of(context).brightness == Brightness.dark
+                              color:
+                                  Theme.of(context).brightness ==
+                                      Brightness.dark
                                   ? Colors.white
-                                  : (Theme.of(context).textTheme.bodyLarge?.color ?? const Color(0xFF222222)),
+                                  : (Theme.of(
+                                          context,
+                                        ).textTheme.bodyLarge?.color ??
+                                        const Color(0xFF222222)),
                               letterSpacing: 1.2,
                             ),
                           ),
@@ -419,7 +458,9 @@ class _WordQuizPageState extends State<WordQuizPage> {
     await flutterTts.setLanguage("en-US");
     await flutterTts.setSpeechRate(0.4);
     setTtsVoice();
-    setState(() { ttsReady = true; });
+    setState(() {
+      ttsReady = true;
+    });
 
     // 新增語音結束監聽
     flutterTts.setCompletionHandler(() {
@@ -440,7 +481,10 @@ class _WordQuizPageState extends State<WordQuizPage> {
     final voices = voicesRaw.where((v) => v['locale'] == 'en-US').toList();
     if (voices.isNotEmpty) {
       final voice = voices[0];
-      await flutterTts.setVoice({"name": voice['name'], "locale": voice['locale']});
+      await flutterTts.setVoice({
+        "name": voice['name'],
+        "locale": voice['locale'],
+      });
     }
   }
 
@@ -462,19 +506,27 @@ class _WordQuizPageState extends State<WordQuizPage> {
     if (word.contains('/')) {
       return;
     }
-    setState(() { isSpeaking = true; });
+    setState(() {
+      isSpeaking = true;
+    });
     try {
       await flutterTts.stop();
       setTtsVoice();
-      await Future.delayed(const Duration(milliseconds: 100)); // 避免 stop/speak 太快破音
+      await Future.delayed(
+        const Duration(milliseconds: 100),
+      ); // 避免 stop/speak 太快破音
       await flutterTts.speak(word);
     } catch (e) {
-      setState(() { isSpeaking = false; });
+      setState(() {
+        isSpeaking = false;
+      });
     }
   }
 
   Future<void> loadWordsAndProgress() async {
-    setState(() { isLoading = true; });
+    setState(() {
+      isLoading = true;
+    });
     String data = await rootBundle.loadString('assets/words.json');
     List<dynamic> jsonResult = json.decode(data);
     Map<String, List<Word>> temp = {};
@@ -546,9 +598,9 @@ class _WordQuizPageState extends State<WordQuizPage> {
     favoriteWords.add(word);
     await prefs.setStringList('favorite_words', favoriteWords.toList());
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('已加入收藏')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('已加入收藏')));
     }
     setState(() {});
   }
@@ -568,9 +620,7 @@ class _WordQuizPageState extends State<WordQuizPage> {
     final double cardRadius = 32;
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('高嚴凱是給學測7000單'),
-      ),
+      appBar: AppBar(title: const Text('高嚴凱是給學測7000單')),
       body: Stack(
         children: [
           // 進度條
@@ -592,7 +642,10 @@ class _WordQuizPageState extends State<WordQuizPage> {
                 const SizedBox(height: 10),
                 Text(
                   '$knownCount / ${words.length}  (${(progress * 100).toStringAsFixed(1)}%)',
-                  style: const TextStyle(fontSize: 18, color: Color(0xFF222222)),
+                  style: const TextStyle(
+                    fontSize: 18,
+                    color: Color(0xFF222222),
+                  ),
                 ),
               ],
             ),
@@ -603,11 +656,28 @@ class _WordQuizPageState extends State<WordQuizPage> {
                 ? Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      const Icon(Icons.emoji_events, color: Color(0xFFFFC700), size: 100),
+                      const Icon(
+                        Icons.emoji_events,
+                        color: Color(0xFFFFC700),
+                        size: 100,
+                      ),
                       const SizedBox(height: 32),
-                      const Text('恭喜你完成本等級所有單字！', style: TextStyle(fontSize: 26, fontWeight: FontWeight.w600, color: Color(0xFF222222))),
+                      const Text(
+                        '恭喜你完成本等級所有單字！',
+                        style: TextStyle(
+                          fontSize: 26,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFF222222),
+                        ),
+                      ),
                       const SizedBox(height: 18),
-                      Text('熟知單字：$knownCount / ${words.length}', style: const TextStyle(fontSize: 20, color: Color(0xFF222222))),
+                      Text(
+                        '熟知單字：$knownCount / ${words.length}',
+                        style: const TextStyle(
+                          fontSize: 20,
+                          color: Color(0xFF222222),
+                        ),
+                      ),
                       const SizedBox(height: 40),
                       SizedBox(
                         width: 180,
@@ -615,19 +685,28 @@ class _WordQuizPageState extends State<WordQuizPage> {
                         child: ElevatedButton(
                           style: ElevatedButton.styleFrom(
                             backgroundColor: progressColor,
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(24),
+                            ),
                             elevation: 0,
                           ),
                           onPressed: () {
                             Navigator.pop(context);
                           },
-                          child: const Text('返回等級選單', style: TextStyle(fontSize: 18, color: Colors.white)),
+                          child: const Text(
+                            '返回等級選單',
+                            style: TextStyle(fontSize: 18, color: Colors.white),
+                          ),
                         ),
                       ),
                     ],
                   )
                 : Dismissible(
-                    key: Key(words[currentIndex].english + words[currentIndex].level + currentIndex.toString()),
+                    key: Key(
+                      words[currentIndex].english +
+                          words[currentIndex].level +
+                          currentIndex.toString(),
+                    ),
                     direction: DismissDirection.horizontal,
                     onDismissed: (direction) {
                       if (direction == DismissDirection.startToEnd) {
@@ -645,9 +724,20 @@ class _WordQuizPageState extends State<WordQuizPage> {
                       padding: const EdgeInsets.only(left: 40),
                       child: Row(
                         children: const [
-                          Icon(Icons.check_circle, color: Color(0xFF34C759), size: 60),
+                          Icon(
+                            Icons.check_circle,
+                            color: Color(0xFF34C759),
+                            size: 60,
+                          ),
                           SizedBox(width: 16),
-                          Text('熟知', style: TextStyle(color: Color(0xFF34C759), fontSize: 28, fontWeight: FontWeight.w600)),
+                          Text(
+                            '熟知',
+                            style: TextStyle(
+                              color: Color(0xFF34C759),
+                              fontSize: 28,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
                         ],
                       ),
                     ),
@@ -661,9 +751,20 @@ class _WordQuizPageState extends State<WordQuizPage> {
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.end,
                         children: const [
-                          Text('還未熟悉', style: TextStyle(color: Color(0xFFFF3B30), fontSize: 28, fontWeight: FontWeight.w600)),
+                          Text(
+                            '還未熟悉',
+                            style: TextStyle(
+                              color: Color(0xFFFF3B30),
+                              fontSize: 28,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
                           SizedBox(width: 16),
-                          Icon(Icons.cancel, color: Color(0xFFFF3B30), size: 60),
+                          Icon(
+                            Icons.cancel,
+                            color: Color(0xFFFF3B30),
+                            size: 60,
+                          ),
                         ],
                       ),
                     ),
@@ -679,11 +780,14 @@ class _WordQuizPageState extends State<WordQuizPage> {
                         if (favoriteWords.contains(word)) {
                           favoriteWords.remove(word);
                           final prefs = await SharedPreferences.getInstance();
-                          await prefs.setStringList('favorite_words', favoriteWords.toList());
+                          await prefs.setStringList(
+                            'favorite_words',
+                            favoriteWords.toList(),
+                          );
                           if (mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text('已移除收藏')),
-                            );
+                            ScaffoldMessenger.of(
+                              context,
+                            ).showSnackBar(SnackBar(content: Text('已移除收藏')));
                           }
                         } else {
                           await addToFavorite(word);
@@ -692,7 +796,10 @@ class _WordQuizPageState extends State<WordQuizPage> {
                       },
                       child: AnimatedContainer(
                         duration: const Duration(milliseconds: 200),
-                        margin: const EdgeInsets.symmetric(horizontal: 32, vertical: 100),
+                        margin: const EdgeInsets.symmetric(
+                          horizontal: 32,
+                          vertical: 100,
+                        ),
                         decoration: BoxDecoration(
                           color: Theme.of(context).brightness == Brightness.dark
                               ? const Color(0xFF232323)
@@ -706,19 +813,27 @@ class _WordQuizPageState extends State<WordQuizPage> {
                             ),
                           ],
                           border: Border.all(
-                            color: Theme.of(context).brightness == Brightness.dark
+                            color:
+                                Theme.of(context).brightness == Brightness.dark
                                 ? const Color(0xFF444444)
                                 : const Color(0xFFE5E5EA),
-                            width: 1.2),
+                            width: 1.2,
+                          ),
                         ),
                         child: Stack(
                           children: [
                             // 星星圖案
-                            if (favoriteWords.contains(words[currentIndex].english))
+                            if (favoriteWords.contains(
+                              words[currentIndex].english,
+                            ))
                               Positioned(
                                 top: 0,
                                 right: 0,
-                                child: Icon(Icons.star, color: Colors.amber, size: 36),
+                                child: Icon(
+                                  Icons.star,
+                                  color: Colors.amber,
+                                  size: 36,
+                                ),
                               ),
                             // 單字內容
                             Column(
@@ -733,7 +848,9 @@ class _WordQuizPageState extends State<WordQuizPage> {
                                         style: TextStyle(
                                           fontSize: 48,
                                           fontWeight: FontWeight.bold,
-                                          color: Theme.of(context).brightness == Brightness.dark
+                                          color:
+                                              Theme.of(context).brightness ==
+                                                  Brightness.dark
                                               ? Colors.white
                                               : const Color(0xFF222222),
                                         ),
@@ -743,8 +860,16 @@ class _WordQuizPageState extends State<WordQuizPage> {
                                       ),
                                     ),
                                     IconButton(
-                                      icon: const Icon(Icons.volume_up, size: 36, color: Color(0xFF007AFF)),
-                                      onPressed: isSpeaking ? null : () => speakWord(words[currentIndex].english),
+                                      icon: const Icon(
+                                        Icons.volume_up,
+                                        size: 36,
+                                        color: Color(0xFF007AFF),
+                                      ),
+                                      onPressed: isSpeaking
+                                          ? null
+                                          : () => speakWord(
+                                              words[currentIndex].english,
+                                            ),
                                     ),
                                   ],
                                 ),
@@ -753,7 +878,9 @@ class _WordQuizPageState extends State<WordQuizPage> {
                                   words[currentIndex].pos,
                                   style: TextStyle(
                                     fontSize: 22,
-                                    color: Theme.of(context).brightness == Brightness.dark
+                                    color:
+                                        Theme.of(context).brightness ==
+                                            Brightness.dark
                                         ? Colors.white70
                                         : const Color(0xFF888888),
                                   ),
@@ -769,7 +896,9 @@ class _WordQuizPageState extends State<WordQuizPage> {
                                           key: const ValueKey('chinese'),
                                           style: TextStyle(
                                             fontSize: 32,
-                                            color: Theme.of(context).brightness == Brightness.dark
+                                            color:
+                                                Theme.of(context).brightness ==
+                                                    Brightness.dark
                                                 ? Colors.blue[200]
                                                 : const Color(0xFF007AFF),
                                             fontWeight: FontWeight.w600,
@@ -818,9 +947,9 @@ class _FavoritePageState extends State<FavoritePage> {
       favWords.removeWhere((w) => w.english == english);
     });
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('已移除收藏')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('已移除收藏')));
     }
   }
 
@@ -836,8 +965,17 @@ class _FavoritePageState extends State<FavoritePage> {
               itemBuilder: (context, idx) {
                 final word = favWords[idx];
                 return ListTile(
-                  title: Text(word.english, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
-                  subtitle: Text('${word.pos}  ${word.chinese}', style: const TextStyle(fontSize: 18)),
+                  title: Text(
+                    word.english,
+                    style: const TextStyle(
+                      fontSize: 24,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  subtitle: Text(
+                    '${word.pos}  ${word.chinese}',
+                    style: const TextStyle(fontSize: 18),
+                  ),
                   trailing: IconButton(
                     icon: const Icon(Icons.delete, color: Colors.red),
                     onPressed: () => removeFavorite(word.english),
@@ -880,7 +1018,9 @@ class _QuizPageState extends State<QuizPage> {
     // 預先產生每題的選項
     optionsList = quizWords.map((answer) {
       List<Word> options = [answer];
-      List<Word> pool = allWords.where((w) => w.english != answer.english).toList();
+      List<Word> pool = allWords
+          .where((w) => w.english != answer.english)
+          .toList();
       pool.shuffle();
       while (options.length < 4 && pool.isNotEmpty) {
         options.add(pool.removeLast());
@@ -903,9 +1043,9 @@ class _QuizPageState extends State<QuizPage> {
       favs.add(english);
       await prefs.setStringList('favorite_words', favs);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('已加入收藏')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('已加入收藏')));
       }
     }
   }
@@ -922,7 +1062,13 @@ class _QuizPageState extends State<QuizPage> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Text('分數：$score / 10', style: const TextStyle(fontSize: 32, fontWeight: FontWeight.bold)),
+              Text(
+                '分數：$score / 10',
+                style: const TextStyle(
+                  fontSize: 32,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
               const SizedBox(height: 24),
               ElevatedButton(
                 onPressed: () => Navigator.pop(context),
@@ -961,7 +1107,10 @@ class _QuizPageState extends State<QuizPage> {
                     },
                     child: Text(
                       widget.type == 'ch2en' ? word.chinese : word.english,
-                      style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
+                      style: const TextStyle(
+                        fontSize: 28,
+                        fontWeight: FontWeight.bold,
+                      ),
                       textAlign: TextAlign.center,
                     ),
                   ),
@@ -991,7 +1140,9 @@ class _QuizPageState extends State<QuizPage> {
                             duration: const Duration(milliseconds: 200),
                             decoration: BoxDecoration(
                               color: isSelected
-                                  ? (isCorrect ? Colors.green[300] : Colors.red[300])
+                                  ? (isCorrect
+                                        ? Colors.green[300]
+                                        : Colors.red[300])
                                   : Theme.of(context).cardColor,
                               borderRadius: BorderRadius.circular(18),
                               border: Border.all(
@@ -1003,7 +1154,9 @@ class _QuizPageState extends State<QuizPage> {
                               boxShadow: [
                                 if (isSelected)
                                   BoxShadow(
-                                    color: (isCorrect ? Colors.green : Colors.red).withOpacity(0.2),
+                                    color:
+                                        (isCorrect ? Colors.green : Colors.red)
+                                            .withOpacity(0.2),
                                     blurRadius: 8,
                                     offset: const Offset(0, 4),
                                   ),
@@ -1015,13 +1168,17 @@ class _QuizPageState extends State<QuizPage> {
                               child: FittedBox(
                                 fit: BoxFit.contain,
                                 child: Text(
-                                  widget.type == 'ch2en' ? opt.english : opt.chinese,
+                                  widget.type == 'ch2en'
+                                      ? opt.english
+                                      : opt.chinese,
                                   style: TextStyle(
                                     fontSize: 36,
                                     fontWeight: FontWeight.bold,
                                     color: isSelected
                                         ? Colors.black
-                                        : Theme.of(context).textTheme.bodyLarge?.color,
+                                        : Theme.of(
+                                            context,
+                                          ).textTheme.bodyLarge?.color,
                                   ),
                                   textAlign: TextAlign.center,
                                 ),
@@ -1034,24 +1191,32 @@ class _QuizPageState extends State<QuizPage> {
                   ),
                   const SizedBox(height: 16),
                   if (answered)
-                    SizedBox(
-                      height: 60,
-                      child: SingleChildScrollView(
-                        physics: const NeverScrollableScrollPhysics(),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Divider(),
-                            const Text('選項解釋：', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
-                            ...options.map((w) => Padding(
-                                  padding: const EdgeInsets.symmetric(vertical: 1),
-                                  child: Text(
-                                    '${w.english}  -  ${w.chinese}',
-                                    style: const TextStyle(fontSize: 14, height: 1.2),
-                                  ),
-                                )),
-                          ],
-                        ),
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Divider(),
+                          const Text(
+                            '選項解釋：',
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          ...options.map(
+                            (w) => Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 1),
+                              child: Text(
+                                '${w.english}  -  ${w.chinese}',
+                                style: const TextStyle(
+                                  fontSize: 14,
+                                  height: 1.2,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                 ],
@@ -1071,9 +1236,13 @@ class _QuizPageState extends State<QuizPage> {
                         backgroundColor: Colors.grey[300],
                         foregroundColor: Colors.black,
                         minimumSize: const Size(0, 56),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
                       ),
-                      onPressed: current > 0 ? () => setState(() => current--) : null,
+                      onPressed: current > 0
+                          ? () => setState(() => current--)
+                          : null,
                       child: const Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
@@ -1091,7 +1260,9 @@ class _QuizPageState extends State<QuizPage> {
                         backgroundColor: Theme.of(context).colorScheme.primary,
                         foregroundColor: Colors.white,
                         minimumSize: const Size(0, 56),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
                       ),
                       onPressed: current < 9
                           ? () => setState(() => current++)
@@ -1101,7 +1272,11 @@ class _QuizPageState extends State<QuizPage> {
                         children: [
                           Text(current < 9 ? '下一題' : '看分數'),
                           const SizedBox(width: 8),
-                          Icon(current < 9 ? Icons.arrow_forward : Icons.emoji_events),
+                          Icon(
+                            current < 9
+                                ? Icons.arrow_forward
+                                : Icons.emoji_events,
+                          ),
                         ],
                       ),
                     ),
