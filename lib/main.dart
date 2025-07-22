@@ -186,39 +186,61 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
   List<Word> favoriteWords = [];
 
   Future<void> resetAllProgress() async {
-    setState(() {
-      isResetting = true;
-    });
-    final prefs = await SharedPreferences.getInstance();
-    for (var level in levels) {
-      await prefs.remove('known_$level');
-    }
-    setState(() {
-      isResetting = false;
-    });
-    if (mounted) {
-      showDialog(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(20),
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext context) => AlertDialog(
+        title: const Text('確定要重置所有進度嗎？'),
+        content: const Text('這將清除所有熟知記錄，且無法復原。'),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('取消'),
           ),
-          title: const Text(
-            '已重置',
-            style: TextStyle(fontWeight: FontWeight.bold),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('確定重置', style: TextStyle(color: Colors.red)),
           ),
-          content: const Text('所有熟知記錄已重置'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(),
-              child: const Text(
-                '確定',
-                style: TextStyle(color: Color(0xFF007AFF)),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      setState(() {
+        isResetting = true;
+      });
+      final prefs = await SharedPreferences.getInstance();
+      for (var level in levels) {
+        await prefs.remove('known_$level');
+      }
+      if (mounted) {
+        setState(() {
+          isResetting = false;
+        });
+        if (mounted) {
+          showDialog(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20),
               ),
+              title: const Text(
+                '已重置',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              content: const Text('所有熟知記錄已重置'),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(),
+                  child: const Text(
+                    '確定',
+                    style: TextStyle(color: Color(0xFF007AFF)),
+                  ),
+                ),
+              ],
             ),
-          ],
-        ),
-      );
+          );
+        }
+      }
     }
   }
 
@@ -1069,10 +1091,9 @@ class _WordQuizPageState extends State<WordQuizPage> {
   }
 
   void goToPreviousWord() {
-    final prevIndex = _findPreviousUnfamiliarIndex(currentIndex);
-    if (prevIndex != -1) {
+    if (currentIndex > 0) {
       setState(() {
-        currentIndex = prevIndex;
+        currentIndex--;
         showChinese = false;
       });
     }
@@ -1582,11 +1603,47 @@ class _QuizPageState extends State<QuizPage> {
   List<int> userAnswers = [];
   List<List<Word>> optionsList = [];
   bool _isProcessing = false;
+  bool _showAnswer = false;
+  bool _isAnswerCorrect = false;
+  int? _selectedIndex;
+  bool _showAllTranslations = false;
 
   @override
   void initState() {
     super.initState();
-    loadQuiz();
+    _resetQuiz();
+  }
+  
+  Future<void> _resetQuiz() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext context) => AlertDialog(
+        title: const Text('確定要重新開始測驗嗎？'),
+        content: const Text('這將清除目前的測驗進度。'),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('確定'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      if (mounted) {
+        setState(() {
+          _showAnswer = false;
+          _isAnswerCorrect = false;
+          _selectedIndex = null;
+          _showAllTranslations = false;
+        });
+        loadQuiz();
+      }
+    }
   }
 
   Future<void> loadQuiz() async {
@@ -1600,12 +1657,15 @@ class _QuizPageState extends State<QuizPage> {
     } else {
       filteredWords = allWords.where((w) => w.level == widget.level).toList();
     }
-    filteredWords.shuffle();
-    // Use the questionCount from widget or default to 10 if not specified
-    final count = widget.questionCount > filteredWords.length 
-        ? filteredWords.length 
-        : widget.questionCount;
-    quizWords = filteredWords.take(count).toList();
+    
+    // Only shuffle and take new questions if we're not restoring state
+    if (quizWords.isEmpty) {
+      filteredWords.shuffle();
+      final count = widget.questionCount > filteredWords.length 
+          ? filteredWords.length 
+          : widget.questionCount;
+      quizWords = filteredWords.take(count).toList();
+    }
 
     // 預先產生每題的選項
     optionsList = quizWords.map((answer) {
@@ -1620,45 +1680,86 @@ class _QuizPageState extends State<QuizPage> {
       options.shuffle();
       return options;
     }).toList();
-    setState(() {
-      current = 0;
-      score = 0;
-      userAnswers = [];
-    });
+    
+    // Initialize userAnswers if not already done
+    if (userAnswers.length != quizWords.length) {
+      userAnswers = List.filled(quizWords.length, -1);
+    }
+    
+    if (mounted) {
+      setState(() {
+        current = 0;
+        score = userAnswers.where((ans) => ans != -1).length; // Count already answered questions
+      });
+    }
   }
 
   void _handleAnswer(int selectedIndex) {
-    if (_isProcessing) return;
+    if (_isProcessing || _showAnswer) return;
+    
     setState(() {
-      _isProcessing = true;
-      userAnswers.add(selectedIndex);
+      _selectedIndex = selectedIndex;
+      _showAnswer = true;
       final correctIdx = optionsList[current].indexWhere((w) => w.english == quizWords[current].english);
-      if (selectedIndex == correctIdx) {
-        score++;
+      _isAnswerCorrect = selectedIndex == correctIdx;
+      
+      // Update the answer in our tracking
+      if (userAnswers[current] == -1) { // Only update if not already answered
+        if (_isAnswerCorrect) {
+          score++;
+        }
+        userAnswers[current] = selectedIndex;
       }
-    });
-
-    Future.delayed(const Duration(seconds: 1), () {
-      if (!mounted) return;
-      if (current < quizWords.length - 1) {
-        setState(() {
-          current++;
-          _isProcessing = false;
-        });
+      
+      if (_isAnswerCorrect) {
+        _showAllTranslations = false;
+        // Auto-advance to next question after a short delay if answer is correct
+        Future.delayed(const Duration(milliseconds: 500), _nextQuestion);
       } else {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder: (_) => QuizResultsPage(
-              quizWords: quizWords,
-              optionsList: optionsList,
-              userAnswers: userAnswers,
-              quizType: widget.type,
-            ),
-          ),
-        );
+        _showAllTranslations = true; // Show all translations for incorrect answers
       }
     });
+  }
+  
+  void _previousQuestion() {
+    if (current > 0) {
+      setState(() {
+        current--;
+        // When going back, show the answer state if it was already answered
+        _showAnswer = userAnswers[current] != -1;
+        _selectedIndex = userAnswers[current] != -1 ? userAnswers[current] : null;
+        _isProcessing = false;
+        // Show translations if this question was answered incorrectly
+        _showAllTranslations = _showAnswer && _selectedIndex != null && 
+            optionsList[current][_selectedIndex!].english != quizWords[current].english;
+      });
+    }
+  }
+
+  void _nextQuestion() {
+    if (!mounted) return;
+    
+    if (current < quizWords.length - 1) {
+      setState(() {
+        current++;
+        _showAnswer = false;
+        _selectedIndex = null;
+        _isProcessing = false;
+        _showAllTranslations = false;
+      });
+    } else {
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (_) => QuizResultsPage(
+            quizWords: quizWords,
+            optionsList: optionsList,
+            userAnswers: userAnswers,
+            quizType: widget.type,
+          ),
+        ),
+      );
+    }
   }
 
   Future<void> addToFavoriteQuiz(String english) async {
@@ -1683,33 +1784,31 @@ class _QuizPageState extends State<QuizPage> {
 
     final word = quizWords[current];
     final options = optionsList[current];
-    int? selected = userAnswers.length > current ? userAnswers[current] : null;
-    bool answered = selected != null;
-    int correctIdx = options.indexWhere((w) => w.english == word.english);
+    final correctIdx = options.indexWhere((w) => w.english == word.english);
 
     return Scaffold(
-      appBar: AppBar(title: Text('測驗 (${current + 1}/10)')),
+      appBar: AppBar(
+        title: Text('測驗 (${current + 1}/${quizWords.length})'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: _resetQuiz,
+            tooltip: '重新開始測驗',
+          ),
+        ],
+      ),
       body: Column(
         children: [
           Expanded(
             child: Padding(
-              padding: const EdgeInsets.all(24),
+              padding: const EdgeInsets.all(16.0),
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
+                mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  GestureDetector(
-                    onDoubleTap: () async {
-                      // 雙擊題目加入收藏
-                      await addToFavoriteQuiz(word.english);
-                    },
-                    child: Text(
-                      widget.type == 'ch2en' ? word.chinese : word.english,
-                      style: const TextStyle(
-                        fontSize: 28,
-                        fontWeight: FontWeight.bold,
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
+                  Text(
+                    widget.type == 'ch2en' ? word.chinese : word.english,
+                    style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                    textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 32),
                   Expanded(
@@ -1723,95 +1822,115 @@ class _QuizPageState extends State<QuizPage> {
                       children: List.generate(4, (i) {
                         final opt = options[i];
                         final isCorrect = i == correctIdx;
-                        final isSelected = selected == i;
+                        final isSelected = _selectedIndex == i;
+                        final showAnswer = _showAnswer && (isCorrect || isSelected);
+                        
                         Color? cardColor = Theme.of(context).cardColor;
                         Color? borderColor = Colors.grey[300];
                         BoxShadow? boxShadow;
 
-                        if (answered) {
+                        if (showAnswer) {
                           if (isCorrect) {
-                            cardColor = Colors.green[300];
+                            cardColor = Colors.green[50];
                             borderColor = Colors.green;
-                            boxShadow = BoxShadow(
-                              color: Colors.green.withOpacity(0.2),
-                              blurRadius: 8,
-                              offset: const Offset(0, 4),
-                            );
                           } else if (isSelected) {
-                            cardColor = Colors.red[300];
+                            cardColor = Colors.red[50];
                             borderColor = Colors.red;
-                            boxShadow = BoxShadow(
-                              color: Colors.red.withOpacity(0.2),
-                              blurRadius: 8,
-                              offset: const Offset(0, 4),
-                            );
                           }
+                        } else if (isSelected) {
+                          boxShadow = BoxShadow(
+                            color: Theme.of(context).primaryColor.withOpacity(0.3),
+                            blurRadius: 8,
+                            spreadRadius: 1,
+                          );
                         }
 
                         return GestureDetector(
-                          onTap: answered
-                              ? null
-                              : () => _handleAnswer(i),
+                          onTap: _showAnswer ? null : () => _handleAnswer(i),
                           child: AnimatedContainer(
                             duration: const Duration(milliseconds: 200),
                             decoration: BoxDecoration(
                               color: cardColor,
-                              borderRadius: BorderRadius.circular(18),
-                              border: Border.all(color: borderColor!, width: 2),
-                              boxShadow: boxShadow != null ? [boxShadow] : [],
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(
+                                color: borderColor!,
+                                width: 1.5,
+                              ),
+                              boxShadow: boxShadow != null ? [boxShadow] : null,
                             ),
-                            margin: EdgeInsets.zero,
-                            padding: const EdgeInsets.all(8),
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Expanded(
-                                  child: Center(
-                                    child: FittedBox(
-                                      fit: BoxFit.contain,
-                                      child: Text(
-                                        widget.type == 'ch2en'
-                                            ? opt.english
-                                            : opt.chinese,
-                                        style: TextStyle(
-                                          fontSize: 36,
-                                          fontWeight: FontWeight.bold,
-                                          color: isSelected
-                                              ? Colors.black
-                                              : Theme.of(
-                                                  context,
-                                                ).textTheme.bodyLarge?.color,
-                                        ),
-                                        textAlign: TextAlign.center,
+                            child: Center(
+                              child: Padding(
+                                padding: const EdgeInsets.all(8.0),
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Text(
+                                      widget.type == 'ch2en' ? opt.english : opt.chinese,
+                                      style: TextStyle(
+                                        fontSize: 18,
+                                        color: isSelected && !isCorrect && _showAnswer
+                                            ? Colors.red
+                                            : (isCorrect && _showAnswer ? Colors.green : null),
+                                        fontWeight: FontWeight.bold,
                                       ),
+                                      textAlign: TextAlign.center,
                                     ),
-                                  ),
+                                    if (_showAllTranslations || _showAnswer || userAnswers[current] != -1)
+                                      Padding(
+                                        padding: const EdgeInsets.only(top: 4.0),
+                                        child: Text(
+                                          widget.type == 'ch2en' ? opt.chinese : opt.english,
+                                          style: TextStyle(
+                                            fontSize: 14,
+                                            color: isCorrect && _showAnswer 
+                                                ? Colors.green[700]
+                                                : (isSelected && !isCorrect && _showAnswer
+                                                    ? Colors.red[700]
+                                                    : Colors.grey[600]),
+                                            fontStyle: FontStyle.italic,
+                                            fontWeight: isCorrect && _showAnswer 
+                                                ? FontWeight.bold 
+                                                : null,
+                                          ),
+                                          textAlign: TextAlign.center,
+                                        ),
+                                      ),
+                                  ],
                                 ),
-                                if (answered) ...[
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    widget.type == 'ch2en'
-                                        ? opt.chinese
-                                        : opt.english,
-                                    style: TextStyle(
-                                      fontSize: 18,
-                                      color: isSelected
-                                          ? Colors.black87
-                                          : Theme.of(
-                                              context,
-                                            ).textTheme.bodySmall?.color,
-                                    ),
-                                    textAlign: TextAlign.center,
-                                  ),
-                                ],
-                              ],
+                              ),
                             ),
                           ),
                         );
                       }),
                     ),
                   ),
-                  const SizedBox(height: 16),
+                  // Navigation buttons - moved up just below options
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8.0, bottom: 16.0),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                      children: [
+                        ElevatedButton.icon(
+                          onPressed: current > 0 ? _previousQuestion : null,
+                          icon: const Icon(Icons.arrow_back),
+                          label: const Text('上一題'),
+                          style: ElevatedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                            minimumSize: const Size(120, 48),
+                          ),
+                        ),
+                        ElevatedButton.icon(
+                          onPressed: _nextQuestion,
+                          icon: const Icon(Icons.arrow_forward),
+                          label: Text(current < quizWords.length - 1 ? '下一題' : '查看結果'),
+                          style: ElevatedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                            minimumSize: const Size(120, 48),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -1840,9 +1959,11 @@ class QuizResultsPage extends StatelessWidget {
   Widget build(BuildContext context) {
     int score = 0;
     for (int i = 0; i < quizWords.length; i++) {
-      final correctIdx = optionsList[i].indexWhere((w) => w.english == quizWords[i].english);
-      if (userAnswers[i] == correctIdx) {
-        score++;
+      if (userAnswers[i] >= 0) { // Only count if answered
+        final correctIdx = optionsList[i].indexWhere((w) => w.english == quizWords[i].english);
+        if (userAnswers[i] == correctIdx) {
+          score++;
+        }
       }
     }
 
@@ -1861,44 +1982,103 @@ class QuizResultsPage extends StatelessWidget {
         itemBuilder: (context, index) {
           final word = quizWords[index];
           final options = optionsList[index];
-          final userAnswerIdx = userAnswers[index];
+          final userAnswer = userAnswers[index];
           final correctIdx = options.indexWhere((w) => w.english == word.english);
-          final bool isCorrect = userAnswerIdx == correctIdx;
-
+          final isCorrect = userAnswer == correctIdx;
+          final userAnswered = userAnswer >= 0;
+          
           return Card(
-            margin: const EdgeInsets.all(8.0),
-            color: isCorrect ? Colors.green.shade50 : Colors.red.shade50,
+            margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             child: Padding(
               padding: const EdgeInsets.all(16.0),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  // Question
                   Text(
-                    'Q${index + 1}: ${quizType == 'ch2en' ? word.chinese : word.english}',
-                    style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                    '${index + 1}. ${quizType == 'ch2en' ? word.chinese : word.english}',
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                   const SizedBox(height: 12),
-                  ...options.map((opt) {
-                    final optIdx = options.indexOf(opt);
-                    final bool isSelected = optIdx == userAnswerIdx;
-                    final bool isAnswer = optIdx == correctIdx;
-
-                    IconData? icon;
-                    Color? color;
-                    if (isAnswer) {
-                      icon = Icons.check_circle;
-                      color = Colors.green;
-                    } else if (isSelected && !isCorrect) {
-                      icon = Icons.cancel;
-                      color = Colors.red;
-                    }
-
-                    return ListTile(
-                      leading: icon != null ? Icon(icon, color: color) : null,
-                      title: Text(quizType == 'ch2en' ? opt.english : opt.chinese),
-                      subtitle: Text(quizType == 'ch2en' ? opt.chinese : opt.english),
-                    );
-                  }).toList(),
+                  
+                  // User's answer
+                  if (userAnswered) ...[
+                    Row(
+                      children: [
+                        Icon(
+                          isCorrect ? Icons.check_circle : Icons.cancel,
+                          color: isCorrect ? Colors.green : Colors.red,
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          '你的答案: ${options[userAnswer].chinese}',
+                          style: TextStyle(
+                            color: isCorrect ? Colors.green : Colors.red,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                  ] else ...[
+                    const Text(
+                      '未回答',
+                      style: TextStyle(color: Colors.grey, fontStyle: FontStyle.italic),
+                    ),
+                    const SizedBox(height: 4),
+                  ],
+                  
+                  // Correct answer
+                  Row(
+                    children: [
+                      const Icon(Icons.check_circle, color: Colors.green, size: 20),
+                      const SizedBox(width: 8),
+                      Text(
+                        '正確答案: ${options[correctIdx].chinese}',
+                        style: const TextStyle(color: Colors.green, fontWeight: FontWeight.w500),
+                      ),
+                    ],
+                  ),
+                  
+                  // Options summary
+                  const SizedBox(height: 8),
+                  const Divider(),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 4,
+                    children: options.asMap().entries.map((entry) {
+                      final idx = entry.key;
+                      final opt = entry.value;
+                      final isCorrectOption = idx == correctIdx;
+                      final isUserChoice = idx == userAnswer;
+                      
+                      Color bgColor = Colors.grey[200]!;
+                      if (isCorrectOption) {
+                        bgColor = Colors.green[100]!;
+                      } else if (isUserChoice && !isCorrect) {
+                        bgColor = Colors.red[100]!;
+                      }
+                      
+                      return Chip(
+                        label: Text(
+                          '${String.fromCharCode(65 + idx)}. ${quizType == 'ch2en' ? opt.english : opt.chinese}',
+                          style: TextStyle(
+                            color: isCorrectOption ? Colors.green[800] : 
+                                   (isUserChoice ? Colors.red[800] : null),
+                            fontWeight: isCorrectOption || isUserChoice ? FontWeight.bold : null,
+                          ),
+                        ),
+                        backgroundColor: bgColor,
+                        side: BorderSide(
+                          color: isCorrectOption ? Colors.green[300]! : 
+                                (isUserChoice ? Colors.red[300]! : Colors.grey[300]!),
+                        ),
+                      );
+                    }).toList(),
+                  ),
                 ],
               ),
             ),
