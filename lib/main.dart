@@ -257,6 +257,57 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
     );
   }
 
+  Future<void> _showQuizOptions() async {
+    final quizLevels = ['1', '2', '3', '4', '5', '6', '全部'];
+    final selectedLevel = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('選擇測驗等級'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: quizLevels
+                .map((level) => ListTile(
+                      title: Text('等級 $level'),
+                      onTap: () => Navigator.pop(ctx, level),
+                    ))
+                .toList(),
+          ),
+        ),
+      ),
+    );
+
+    if (selectedLevel == null) return;
+
+    final type = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('選擇題型'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              title: const Text('題目顯示中文（選英文）'),
+              onTap: () => Navigator.pop(ctx, 'ch2en'),
+            ),
+            ListTile(
+              title: const Text('題目顯示英文（選中文）'),
+              onTap: () => Navigator.pop(ctx, 'en2ch'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (type != null) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+            builder: (_) => QuizPage(type: type, level: selectedLevel)),
+      );
+    }
+  }
+
   Future<List<Word>> _loadWordsForLevel(String level) async {
     String data = await rootBundle.loadString('assets/words.json');
     List<dynamic> jsonResult = json.decode(data);
@@ -318,34 +369,7 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
                   ),
                   padding: const EdgeInsets.symmetric(vertical: 16),
                 ),
-                onPressed: () async {
-                  // 題型選擇
-                  final type = await showDialog<String>(
-                    context: context,
-                    builder: (ctx) => AlertDialog(
-                      title: const Text('選擇題型'),
-                      content: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          ListTile(
-                            title: const Text('題目顯示中文（選英文）'),
-                            onTap: () => Navigator.pop(ctx, 'ch2en'),
-                          ),
-                          ListTile(
-                            title: const Text('題目顯示英文（選中文）'),
-                            onTap: () => Navigator.pop(ctx, 'en2ch'),
-                          ),
-                        ],
-                      ),
-                    ),
-                  );
-                  if (type != null) {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (_) => QuizPage(type: type)),
-                    );
-                  }
-                },
+                onPressed: _showQuizOptions,
               ),
             ),
             const SizedBox(height: 24),
@@ -738,12 +762,13 @@ class _WordQuizPageState extends State<WordQuizPage> {
 
   Future<void> speakWord(String word) async {
     if (isSpeaking || !ttsReady) return;
-    if (word.contains('/')) return;
+    final textToSpeak = word.replaceAll('/', ' ');
+    if (textToSpeak.trim().isEmpty) return;
 
     setState(() => isSpeaking = true);
     try {
       await _initTts(); // Re-initialize to apply latest settings
-      await flutterTts.speak(word);
+      await flutterTts.speak(textToSpeak);
     } catch (e) {
       if (mounted) setState(() => isSpeaking = false);
     }
@@ -816,6 +841,15 @@ class _WordQuizPageState extends State<WordQuizPage> {
     if (settings.autoSpeak && !isFinished && currentIndex < words.length) {
       await Future.delayed(const Duration(milliseconds: 300));
       speakWord(words[currentIndex].english);
+    }
+  }
+
+  void goToPreviousWord() {
+    if (currentIndex > 0) {
+      setState(() {
+        currentIndex--;
+        showChinese = false;
+      });
     }
   }
 
@@ -1020,124 +1054,137 @@ class _WordQuizPageState extends State<WordQuizPage> {
                         }
                         setState(() {});
                       },
-                      child: AnimatedContainer(
-                        duration: const Duration(milliseconds: 200),
-                        margin: const EdgeInsets.symmetric(
-                          horizontal: 32,
-                          vertical: 100,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Theme.of(context).brightness == Brightness.dark
-                              ? const Color(0xFF232323)
-                              : Colors.white,
-                          borderRadius: BorderRadius.circular(cardRadius),
-                          boxShadow: [
-                            BoxShadow(
-                              color: cardShadow,
-                              blurRadius: 24,
-                              offset: const Offset(0, 8),
+                      child: Stack(
+                        children: [
+                          AnimatedContainer(
+                            duration: const Duration(milliseconds: 200),
+                            margin: const EdgeInsets.symmetric(
+                              horizontal: 32,
+                              vertical: 100,
                             ),
-                          ],
-                          border: Border.all(
-                            color:
-                                Theme.of(context).brightness == Brightness.dark
-                                ? const Color(0xFF444444)
-                                : const Color(0xFFE5E5EA),
-                            width: 1.2,
-                          ),
-                        ),
-                        child: Stack(
-                          children: [
-                            // 星星圖案
-                            if (favoriteWords.contains(
-                              words[currentIndex].english,
-                            ))
-                              Positioned(
-                                top: 0,
-                                right: 0,
-                                child: Icon(
-                                  Icons.star,
-                                  color: Colors.amber,
-                                  size: 36,
+                            decoration: BoxDecoration(
+                              color: Theme.of(context).brightness == Brightness.dark
+                                  ? const Color(0xFF232323)
+                                  : Colors.white,
+                              borderRadius: BorderRadius.circular(cardRadius),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: cardShadow,
+                                  blurRadius: 24,
+                                  offset: const Offset(0, 8),
                                 ),
+                              ],
+                              border: Border.all(
+                                color:
+                                    Theme.of(context).brightness == Brightness.dark
+                                    ? const Color(0xFF444444)
+                                    : const Color(0xFFE5E5EA),
+                                width: 1.2,
                               ),
-                            // 單字內容
-                            Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
+                            ),
+                            child: Stack(
                               children: [
-                                Row(
+                                // 星星圖案
+                                if (favoriteWords.contains(
+                                  words[currentIndex].english,
+                                ))
+                                  Positioned(
+                                    top: 0,
+                                    right: 0,
+                                    child: Icon(
+                                      Icons.star,
+                                      color: Colors.amber,
+                                      size: 36,
+                                    ),
+                                  ),
+                                // 單字內容
+                                Column(
                                   mainAxisAlignment: MainAxisAlignment.center,
                                   children: [
-                                    Flexible(
-                                      child: Text(
-                                        words[currentIndex].english,
-                                        style: TextStyle(
-                                          fontSize: 48,
-                                          fontWeight: FontWeight.bold,
-                                          color:
-                                              Theme.of(context).brightness ==
-                                                  Brightness.dark
-                                              ? Colors.white
-                                              : const Color(0xFF222222),
-                                        ),
-                                        softWrap: true,
-                                        overflow: TextOverflow.visible,
-                                        // maxLines: 2, // 可視需求加上
-                                      ),
-                                    ),
-                                    IconButton(
-                                      icon: const Icon(
-                                        Icons.volume_up,
-                                        size: 36,
-                                        color: Color(0xFF007AFF),
-                                      ),
-                                      onPressed: isSpeaking
-                                          ? null
-                                          : () => speakWord(
-                                              words[currentIndex].english,
+                                    Row(
+                                      mainAxisAlignment: MainAxisAlignment.center,
+                                      children: [
+                                        Flexible(
+                                          child: Text(
+                                            words[currentIndex].english,
+                                            style: TextStyle(
+                                              fontSize: 48,
+                                              fontWeight: FontWeight.bold,
+                                              color:
+                                                  Theme.of(context).brightness ==
+                                                      Brightness.dark
+                                                  ? Colors.white
+                                                  : const Color(0xFF222222),
                                             ),
+                                            softWrap: true,
+                                            overflow: TextOverflow.visible,
+                                            // maxLines: 2, // 可視需求加上
+                                          ),
+                                        ),
+                                        IconButton(
+                                          icon: const Icon(
+                                            Icons.volume_up,
+                                            size: 36,
+                                            color: Color(0xFF007AFF),
+                                          ),
+                                          onPressed: isSpeaking
+                                              ? null
+                                              : () => speakWord(
+                                                  words[currentIndex].english,
+                                                ),
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 18),
+                                    Text(
+                                      words[currentIndex].pos,
+                                      style: TextStyle(
+                                        fontSize: 22,
+                                        color:
+                                            Theme.of(context).brightness ==
+                                                Brightness.dark
+                                            ? Colors.white70
+                                            : const Color(0xFF888888),
+                                      ),
+                                      overflow: TextOverflow.ellipsis,
+                                      maxLines: 1,
+                                    ),
+                                    const SizedBox(height: 24),
+                                    AnimatedSwitcher(
+                                      duration: const Duration(milliseconds: 80),
+                                      child: showChinese
+                                          ? Text(
+                                              words[currentIndex].chinese,
+                                              key: const ValueKey('chinese'),
+                                              style: TextStyle(
+                                                fontSize: 32,
+                                                color:
+                                                    Theme.of(context).brightness ==
+                                                        Brightness.dark
+                                                    ? Colors.blue[200]
+                                                    : const Color(0xFF007AFF),
+                                                fontWeight: FontWeight.w600,
+                                              ),
+                                              overflow: TextOverflow.ellipsis,
+                                              maxLines: 1,
+                                            )
+                                          : const SizedBox.shrink(),
                                     ),
                                   ],
                                 ),
-                                const SizedBox(height: 18),
-                                Text(
-                                  words[currentIndex].pos,
-                                  style: TextStyle(
-                                    fontSize: 22,
-                                    color:
-                                        Theme.of(context).brightness ==
-                                            Brightness.dark
-                                        ? Colors.white70
-                                        : const Color(0xFF888888),
-                                  ),
-                                  overflow: TextOverflow.ellipsis,
-                                  maxLines: 1,
-                                ),
-                                const SizedBox(height: 24),
-                                AnimatedSwitcher(
-                                  duration: const Duration(milliseconds: 80),
-                                  child: showChinese
-                                      ? Text(
-                                          words[currentIndex].chinese,
-                                          key: const ValueKey('chinese'),
-                                          style: TextStyle(
-                                            fontSize: 32,
-                                            color:
-                                                Theme.of(context).brightness ==
-                                                    Brightness.dark
-                                                ? Colors.blue[200]
-                                                : const Color(0xFF007AFF),
-                                            fontWeight: FontWeight.w600,
-                                          ),
-                                          overflow: TextOverflow.ellipsis,
-                                          maxLines: 1,
-                                        )
-                                      : const SizedBox.shrink(),
-                                ),
                               ],
                             ),
-                          ],
-                        ),
+                          ),
+                          if (currentIndex > 0)
+                            Positioned(
+                              top: 110,
+                              right: 40,
+                              child: IconButton(
+                                icon: const Icon(Icons.arrow_back_ios_new),
+                                onPressed: goToPreviousWord,
+                              ),
+                            ),
+                        ],
                       ),
                     ),
                   ),
@@ -1252,7 +1299,8 @@ class _FavoritePageState extends State<FavoritePage> {
 
 class QuizPage extends StatefulWidget {
   final String type; // 'ch2en' or 'en2ch'
-  const QuizPage({super.key, required this.type});
+  final String level;
+  const QuizPage({super.key, required this.type, required this.level});
   @override
   State<QuizPage> createState() => _QuizPageState();
 }
@@ -1263,8 +1311,8 @@ class _QuizPageState extends State<QuizPage> {
   int current = 0;
   int score = 0;
   List<int> userAnswers = [];
-  bool showResult = false;
   List<List<Word>> optionsList = [];
+  bool _isProcessing = false;
 
   @override
   void initState() {
@@ -1276,9 +1324,17 @@ class _QuizPageState extends State<QuizPage> {
     String data = await rootBundle.loadString('assets/words.json');
     List<dynamic> jsonResult = json.decode(data);
     allWords = jsonResult.map((item) => Word.fromJson(item)).toList();
-    allWords.shuffle();
-    quizWords = allWords.take(10).toList();
-    // 預先產生每題の選項
+
+    List<Word> filteredWords;
+    if (widget.level == '全部') {
+      filteredWords = List.from(allWords);
+    } else {
+      filteredWords = allWords.where((w) => w.level == widget.level).toList();
+    }
+    filteredWords.shuffle();
+    quizWords = filteredWords.take(10).toList();
+
+    // 預先產生每題的選項
     optionsList = quizWords.map((answer) {
       List<Word> options = [answer];
       List<Word> pool = allWords
@@ -1295,7 +1351,40 @@ class _QuizPageState extends State<QuizPage> {
       current = 0;
       score = 0;
       userAnswers = [];
-      showResult = false;
+    });
+  }
+
+  void _handleAnswer(int selectedIndex) {
+    if (_isProcessing) return;
+    setState(() {
+      _isProcessing = true;
+      userAnswers.add(selectedIndex);
+      final correctIdx = optionsList[current].indexWhere((w) => w.english == quizWords[current].english);
+      if (selectedIndex == correctIdx) {
+        score++;
+      }
+    });
+
+    Future.delayed(const Duration(seconds: 1), () {
+      if (!mounted) return;
+      if (current < quizWords.length - 1) {
+        setState(() {
+          current++;
+          _isProcessing = false;
+        });
+      } else {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (_) => QuizResultsPage(
+              quizWords: quizWords,
+              optionsList: optionsList,
+              userAnswers: userAnswers,
+              quizType: widget.type,
+            ),
+          ),
+        );
+      }
     });
   }
 
@@ -1318,35 +1407,7 @@ class _QuizPageState extends State<QuizPage> {
     if (quizWords.isEmpty) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
-    if (showResult) {
-      return Scaffold(
-        appBar: AppBar(title: const Text('測驗結果')),
-        body: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Text(
-                '分數：$score / 10',
-                style: const TextStyle(
-                  fontSize: 32,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: 24),
-              ElevatedButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('返回主畫面'),
-              ),
-              const SizedBox(height: 16),
-              ElevatedButton(
-                onPressed: () => loadQuiz(),
-                child: const Text('再測一次'),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
+
     final word = quizWords[current];
     final options = optionsList[current];
     int? selected = userAnswers.length > current ? userAnswers[current] : null;
@@ -1417,12 +1478,7 @@ class _QuizPageState extends State<QuizPage> {
                         return GestureDetector(
                           onTap: answered
                               ? null
-                              : () {
-                                  setState(() {
-                                    userAnswers.add(i);
-                                    if (i == correctIdx) score++;
-                                  });
-                                },
+                              : () => _handleAnswer(i),
                           child: AnimatedContainer(
                             duration: const Duration(milliseconds: 200),
                             decoration: BoxDecoration(
@@ -1487,68 +1543,94 @@ class _QuizPageState extends State<QuizPage> {
               ),
             ),
           ),
-          if (answered)
-            Container(
-              color: Theme.of(context).scaffoldBackgroundColor,
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        ],
+      ),
+    );
+  }
+}
+
+class QuizResultsPage extends StatelessWidget {
+  final List<Word> quizWords;
+  final List<List<Word>> optionsList;
+  final List<int> userAnswers;
+  final String quizType;
+
+  const QuizResultsPage({
+    super.key,
+    required this.quizWords,
+    required this.optionsList,
+    required this.userAnswers,
+    required this.quizType,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    int score = 0;
+    for (int i = 0; i < quizWords.length; i++) {
+      final correctIdx = optionsList[i].indexWhere((w) => w.english == quizWords[i].english);
+      if (userAnswers[i] == correctIdx) {
+        score++;
+      }
+    }
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('測驗結果 - $score / ${quizWords.length}'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.home),
+            onPressed: () => Navigator.of(context).popUntil((route) => route.isFirst),
+          )
+        ],
+      ),
+      body: ListView.builder(
+        itemCount: quizWords.length,
+        itemBuilder: (context, index) {
+          final word = quizWords[index];
+          final options = optionsList[index];
+          final userAnswerIdx = userAnswers[index];
+          final correctIdx = options.indexWhere((w) => w.english == word.english);
+          final bool isCorrect = userAnswerIdx == correctIdx;
+
+          return Card(
+            margin: const EdgeInsets.all(8.0),
+            color: isCorrect ? Colors.green.shade50 : Colors.red.shade50,
+            child: Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Expanded(
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.grey[300],
-                        foregroundColor: Colors.black,
-                        minimumSize: const Size(0, 56),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                      ),
-                      onPressed: current > 0
-                          ? () => setState(() => current--)
-                          : null,
-                      child: const Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.arrow_back),
-                          SizedBox(width: 8),
-                          Text('上一題'),
-                        ],
-                      ),
-                    ),
+                  Text(
+                    'Q${index + 1}: ${quizType == 'ch2en' ? word.chinese : word.english}',
+                    style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
                   ),
-                  const SizedBox(width: 24),
-                  Expanded(
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Theme.of(context).colorScheme.primary,
-                        foregroundColor: Colors.white,
-                        minimumSize: const Size(0, 56),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                      ),
-                      onPressed: current < 9
-                          ? () => setState(() => current++)
-                          : () => setState(() => showResult = true),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Text(current < 9 ? '下一題' : '看分數'),
-                          const SizedBox(width: 8),
-                          Icon(
-                            current < 9
-                                ? Icons.arrow_forward
-                                : Icons.emoji_events,
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
+                  const SizedBox(height: 12),
+                  ...options.map((opt) {
+                    final optIdx = options.indexOf(opt);
+                    final bool isSelected = optIdx == userAnswerIdx;
+                    final bool isAnswer = optIdx == correctIdx;
+
+                    IconData? icon;
+                    Color? color;
+                    if (isAnswer) {
+                      icon = Icons.check_circle;
+                      color = Colors.green;
+                    } else if (isSelected && !isCorrect) {
+                      icon = Icons.cancel;
+                      color = Colors.red;
+                    }
+
+                    return ListTile(
+                      leading: icon != null ? Icon(icon, color: color) : null,
+                      title: Text(quizType == 'ch2en' ? opt.english : opt.chinese),
+                      subtitle: Text(quizType == 'ch2en' ? opt.chinese : opt.english),
+                    );
+                  }).toList(),
                 ],
               ),
             ),
-        ],
+          );
+        },
       ),
     );
   }
