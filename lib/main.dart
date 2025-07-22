@@ -1066,15 +1066,21 @@ class _WordQuizPageState extends State<WordQuizPage> {
     final prefs = await SharedPreferences.getInstance();
     String key = 'known_${selectedLevel ?? ''}';
     String wordKey = words[currentIndex].english;
+    
+    // Update known words set based on swipe direction
     if (known) {
       knownWords.add(wordKey);
-      await prefs.setStringList(key, knownWords.toList());
+    } else {
+      knownWords.remove(wordKey);
     }
+    // Save updated known words to shared preferences
+    await prefs.setStringList(key, knownWords.toList());
 
     final nextIndex = _findNextUnfamiliarIndex(currentIndex);
 
     setState(() {
-      if (known) knownCount = knownWords.length;
+      // Always update knownCount to reflect current knownWords size
+      knownCount = knownWords.length;
       if (nextIndex != -1) {
         currentIndex = nextIndex;
         showChinese = false;
