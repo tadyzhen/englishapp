@@ -326,6 +326,16 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
         title: const Text('高嚴凱是給學測7000單'),
         actions: [
           IconButton(
+            icon: const Icon(Icons.book),
+            tooltip: '所有單字',
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const AllWordsPage()),
+              );
+            },
+          ),
+          IconButton(
             icon: const Icon(Icons.star),
             tooltip: '收藏',
             onPressed: () async {
@@ -676,6 +686,9 @@ class Word {
   final String pos;
   final String engPos;
   final String chinese;
+  final String? synonyms;
+  final String? antonyms;
+  final String? example;
 
   Word({
     required this.level,
@@ -683,6 +696,9 @@ class Word {
     required this.pos,
     required this.engPos,
     required this.chinese,
+    this.synonyms,
+    this.antonyms,
+    this.example,
   });
 
   factory Word.fromJson(Map<String, dynamic> json) {
@@ -692,6 +708,9 @@ class Word {
       pos: json['pos'].toString(),
       engPos: json['output'].toString(),
       chinese: json['chinese'].toString(),
+      synonyms: json['synonyms'],
+      antonyms: json['antonyms'],
+      example: json['example'],
     );
   }
 }
@@ -1677,6 +1696,217 @@ class QuizResultsPage extends StatelessWidget {
             ),
           );
         },
+      ),
+    );
+  }
+}
+
+
+enum SortOrder { az, level }
+
+class AllWordsPage extends StatefulWidget {
+  const AllWordsPage({super.key});
+
+  @override
+  State<AllWordsPage> createState() => _AllWordsPageState();
+}
+
+class _AllWordsPageState extends State<AllWordsPage> {
+  List<Word> _allWords = [];
+  List<Word> _filteredWords = [];
+  final TextEditingController _searchController = TextEditingController();
+  SortOrder _sortOrder = SortOrder.az;
+
+  // Simulated data for demonstration
+  final Map<String, Map<String, String>> _extraWordData = {
+    'abandon': {
+      'synonyms': 'give up, desert, forsake',
+      'antonyms': 'keep, continue, maintain',
+      'example': 'He had to abandon his plan to build a house.'
+    },
+    'ability': {
+      'synonyms': 'capability, skill, talent',
+      'antonyms': 'inability, incapacity',
+      'example': 'She has the ability to solve complex problems.'
+    }
+  };
+
+  @override
+  void initState() {
+    super.initState();
+    _loadAllWords();
+    _searchController.addListener(_filterWords);
+  }
+
+  Future<void> _loadAllWords() async {
+    String data = await rootBundle.loadString('assets/words.json');
+    List<dynamic> jsonResult = json.decode(data);
+    setState(() {
+      _allWords = jsonResult.map((item) {
+        final word = Word.fromJson(item);
+        final extraData = _extraWordData[word.english];
+        if (extraData != null) {
+          return Word(
+            level: word.level,
+            english: word.english,
+            pos: word.pos,
+            engPos: word.engPos,
+            chinese: word.chinese,
+            synonyms: extraData['synonyms'],
+            antonyms: extraData['antonyms'],
+            example: extraData['example'],
+          );
+        }
+        return word;
+      }).toList();
+      _filterAndSortWords();
+    });
+  }
+
+  void _filterWords() {
+    _filterAndSortWords();
+  }
+
+  void _filterAndSortWords() {
+    List<Word> tempWords = List.from(_allWords);
+
+    // Filtering
+    final query = _searchController.text.toLowerCase();
+    if (query.isNotEmpty) {
+      tempWords = tempWords
+          .where((word) => word.english.toLowerCase().contains(query))
+          .toList();
+    }
+
+    // Sorting
+    if (_sortOrder == SortOrder.az) {
+      tempWords.sort((a, b) => a.english.compareTo(b.english));
+    } else if (_sortOrder == SortOrder.level) {
+      tempWords.sort((a, b) {
+        int levelComp = a.level.compareTo(b.level);
+        if (levelComp != 0) return levelComp;
+        return a.english.compareTo(b.english);
+      });
+    }
+
+    setState(() {
+      _filteredWords = tempWords;
+    });
+  }
+
+  void _showWordDetailsDialog(Word word) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(word.english, style: const TextStyle(fontWeight: FontWeight.bold)),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('${word.pos} ${word.chinese}'),
+              if (word.synonyms != null) ...[
+                const SizedBox(height: 16),
+                const Text('同義字:', style: TextStyle(fontWeight: FontWeight.bold)),
+                Text(word.synonyms!),
+              ],
+              if (word.antonyms != null) ...[
+                const SizedBox(height: 16),
+                const Text('反義字:', style: TextStyle(fontWeight: FontWeight.bold)),
+                Text(word.antonyms!),
+              ],
+              if (word.example != null) ...[
+                const SizedBox(height: 16),
+                const Text('例句:', style: TextStyle(fontWeight: FontWeight.bold)),
+                Text(word.example!),
+              ],
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('關閉'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('所有單字'),
+      ),
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(8.0),
+            child: TextField(
+              controller: _searchController,
+              decoration: InputDecoration(
+                labelText: '搜尋單字',
+                prefixIcon: const Icon(Icons.search),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8.0),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                ChoiceChip(
+                  label: const Text('A-Z 排序'),
+                  selected: _sortOrder == SortOrder.az,
+                  onSelected: (selected) {
+                    if (selected) {
+                      setState(() {
+                        _sortOrder = SortOrder.az;
+                        _filterAndSortWords();
+                      });
+                    }
+                  },
+                ),
+                const SizedBox(width: 8),
+                ChoiceChip(
+                  label: const Text('等級排序'),
+                  selected: _sortOrder == SortOrder.level,
+                  onSelected: (selected) {
+                    if (selected) {
+                      setState(() {
+                        _sortOrder = SortOrder.level;
+                        _filterAndSortWords();
+                      });
+                    }
+                  },
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: ListView.builder(
+              itemCount: _filteredWords.length,
+              itemBuilder: (context, index) {
+                final word = _filteredWords[index];
+                return ListTile(
+                  title: Text(word.english),
+                  subtitle: Text('等級 ${word.level} - ${word.chinese}'),
+                  onTap: () => _showWordDetailsDialog(word),
+                );
+              },
+            ),
+          ),
+        ],
       ),
     );
   }
