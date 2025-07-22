@@ -9,7 +9,17 @@ import 'dart:math' as math;
 class AppSettings extends ChangeNotifier {
   ThemeMode themeMode;
   bool autoSpeak;
-  AppSettings({required this.themeMode, this.autoSpeak = false});
+  double speechRate;
+  double speechPitch;
+  Map<String, String>? ttsVoice;
+
+  AppSettings({
+    required this.themeMode,
+    this.autoSpeak = false,
+    this.speechRate = 0.4,
+    this.speechPitch = 1.0,
+    this.ttsVoice,
+  });
 
   void setThemeMode(ThemeMode mode) async {
     themeMode = mode;
@@ -25,13 +35,45 @@ class AppSettings extends ChangeNotifier {
     prefs.setBool('autoSpeak', value);
   }
 
+  void setSpeechRate(double rate) async {
+    speechRate = rate;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    prefs.setDouble('speechRate', rate);
+  }
+
+  void setSpeechPitch(double pitch) async {
+    speechPitch = pitch;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    prefs.setDouble('speechPitch', pitch);
+  }
+
+  void setTtsVoice(Map<String, String> voice) async {
+    ttsVoice = voice;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    prefs.setString('ttsVoice', json.encode(voice));
+  }
+
   static Future<AppSettings> load() async {
     final prefs = await SharedPreferences.getInstance();
     String theme = prefs.getString('themeMode') ?? 'light';
     bool autoSpeak = prefs.getBool('autoSpeak') ?? false;
+    double speechRate = prefs.getDouble('speechRate') ?? 0.4;
+    double speechPitch = prefs.getDouble('speechPitch') ?? 1.0;
+    Map<String, String>? ttsVoice;
+    String? voiceString = prefs.getString('ttsVoice');
+    if (voiceString != null) {
+      ttsVoice = Map<String, String>.from(json.decode(voiceString));
+    }
+
     return AppSettings(
       themeMode: theme == 'dark' ? ThemeMode.dark : ThemeMode.light,
       autoSpeak: autoSpeak,
+      speechRate: speechRate,
+      speechPitch: speechPitch,
+      ttsVoice: ttsVoice,
     );
   }
 }
@@ -170,67 +212,58 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
   }
 
   void showSettingsDialog() {
-    final settings = SettingsProvider.of(context);
     showDialog(
       context: context,
-      builder: (ctx) {
-        return AlertDialog(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(20),
-          ),
-          title: const Text(
-            '設定',
-            style: TextStyle(fontWeight: FontWeight.bold),
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // 主題切換
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text('主題模式', style: TextStyle(fontSize: 18)),
-                  DropdownButton<ThemeMode>(
-                    value: settings.themeMode,
-                    items: const [
-                      DropdownMenuItem(
-                        value: ThemeMode.light,
-                        child: Text('亮'),
-                      ),
-                      DropdownMenuItem(value: ThemeMode.dark, child: Text('暗')),
-                    ],
-                    onChanged: (mode) {
-                      if (mode != null) settings.setThemeMode(mode);
-                    },
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              // 自動播放語音
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text('自動播放語音', style: TextStyle(fontSize: 18)),
-                  Switch(
-                    value: settings.autoSpeak,
-                    onChanged: (v) => settings.setAutoSpeak(v),
-                  ),
-                ],
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(),
-              child: const Text(
-                '關閉',
-                style: TextStyle(color: Color(0xFF007AFF)),
-              ),
-            ),
-          ],
-        );
-      },
+      builder: (ctx) => const SettingsDialog(),
     );
+  }
+
+  Future<void> _showLevelOptionsDialog(String level) async {
+    final words = await _loadWordsForLevel(level);
+    if (!mounted) return;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('等級 $level'),
+        content: const Text('請選擇一個選項'),
+        actions: [
+          TextButton(
+            child: const Text('繼續'),
+            onPressed: () {
+              Navigator.of(ctx).pop();
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => WordQuizPage(initialLevel: level),
+                ),
+              );
+            },
+          ),
+          TextButton(
+            child: const Text('選擇單字'),
+            onPressed: () {
+              Navigator.of(ctx).pop();
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => WordListPage(level: level, words: words),
+                ),
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<List<Word>> _loadWordsForLevel(String level) async {
+    String data = await rootBundle.loadString('assets/words.json');
+    List<dynamic> jsonResult = json.decode(data);
+    return jsonResult
+        .map((item) => Word.fromJson(item))
+        .where((word) => word.level == level)
+        .toList();
   }
 
   @override
@@ -329,12 +362,7 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
                   final level = levels[idx];
                   return GestureDetector(
                     onTap: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => WordQuizPage(initialLevel: level),
-                        ),
-                      );
+                      _showLevelOptionsDialog(level);
                     },
                     child: AnimatedContainer(
                       duration: const Duration(milliseconds: 200),
@@ -391,6 +419,230 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
   }
 }
 
+class SettingsDialog extends StatefulWidget {
+  const SettingsDialog({super.key});
+
+  @override
+  State<SettingsDialog> createState() => _SettingsDialogState();
+}
+
+class _SettingsDialogState extends State<SettingsDialog> {
+  late FlutterTts flutterTts;
+  final List<Map<String, String>> _displayVoices = [];
+  String? _selectedVoiceName;
+
+  // Predefined list of desired voices and their Chinese names.
+  final List<Map<String, String>> preferredVoices = [
+    {'locale': 'en-US', 'displayName': '美國語音'},
+    {'locale': 'en-GB', 'displayName': '英國語音'},
+    {'locale': 'en-AU', 'displayName': '澳洲語音'},
+    {'locale': 'en-IN', 'displayName': '印度語音'},
+    {'locale': 'en-CA', 'displayName': '加拿大語音'},
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    flutterTts = FlutterTts();
+    // Use a post-frame callback to access the provider safely.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadVoices();
+    });
+  }
+
+  Future<void> _loadVoices() async {
+    try {
+      // Ensure context is mounted before using it.
+      if (!mounted) return;
+      final settings = SettingsProvider.of(context);
+
+      List<dynamic> allVoices = await flutterTts.getVoices;
+      List<Map<String, String>> availableVoices = allVoices
+          .map((v) =>
+              {"name": v['name'] as String, "locale": v['locale'] as String})
+          .toList();
+
+      List<Map<String, String>> tempDisplayVoices = [];
+
+      for (var prefVoice in preferredVoices) {
+        final foundVoice = availableVoices.firstWhere(
+          (v) => v['locale'] == prefVoice['locale'],
+          orElse: () => {},
+        );
+
+        if (foundVoice.isNotEmpty) {
+          tempDisplayVoices.add({
+            'name': foundVoice['name']!,
+            'locale': foundVoice['locale']!,
+            'displayName': prefVoice['displayName']!,
+          });
+        }
+      }
+
+      // Fallback if no preferred voices are found
+      if (tempDisplayVoices.isEmpty) {
+        tempDisplayVoices = availableVoices
+            .where((v) => v['locale']!.startsWith('en-'))
+            .take(5)
+            .map((v) => {...v, 'displayName': v['name']!})
+            .toList();
+      }
+      
+      if (!mounted) return;
+
+      setState(() {
+        _displayVoices.clear();
+        _displayVoices.addAll(tempDisplayVoices);
+
+        _selectedVoiceName = settings.ttsVoice?['name'];
+
+        if (_selectedVoiceName == null ||
+            !_displayVoices.any((v) => v['name'] == _selectedVoiceName)) {
+          if (_displayVoices.isNotEmpty) {
+            _selectedVoiceName = _displayVoices.first['name'];
+            settings.setTtsVoice({
+              'name': _displayVoices.first['name']!,
+              'locale': _displayVoices.first['locale']!,
+            });
+          } else {
+            _selectedVoiceName = null;
+          }
+        }
+      });
+    } catch (e) {
+      // print("Error loading voices: $e");
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final settings = SettingsProvider.of(context);
+    return AlertDialog(
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(20),
+      ),
+      title: const Text(
+        '設定',
+        style: TextStyle(fontWeight: FontWeight.bold),
+      ),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Theme
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text('主題模式', style: TextStyle(fontSize: 18)),
+                DropdownButton<ThemeMode>(
+                  value: settings.themeMode,
+                  items: const [
+                    DropdownMenuItem(value: ThemeMode.light, child: Text('亮')),
+                    DropdownMenuItem(value: ThemeMode.dark, child: Text('暗')),
+                  ],
+                  onChanged: (mode) {
+                    if (mode != null) settings.setThemeMode(mode);
+                  },
+                ),
+              ],
+            ),
+            const Divider(),
+            // Auto-speak
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text('自動播放語音', style: TextStyle(fontSize: 18)),
+                Switch(
+                  value: settings.autoSpeak,
+                  onChanged: (v) => settings.setAutoSpeak(v),
+                ),
+              ],
+            ),
+            const Divider(),
+            // Speech Rate
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('語速', style: TextStyle(fontSize: 18)),
+                Slider(
+                  value: settings.speechRate,
+                  min: 0.1,
+                  max: 1.0,
+                  divisions: 9,
+                  label: settings.speechRate.toStringAsFixed(1),
+                  onChanged: (rate) => settings.setSpeechRate(rate),
+                ),
+              ],
+            ),
+            const Divider(),
+            // Speech Pitch
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('音高', style: TextStyle(fontSize: 18)),
+                Slider(
+                  value: settings.speechPitch,
+                  min: 0.5,
+                  max: 2.0,
+                  divisions: 15,
+                  label: settings.speechPitch.toStringAsFixed(1),
+                  onChanged: (pitch) => settings.setSpeechPitch(pitch),
+                ),
+              ],
+            ),
+            const Divider(),
+            // Voice Selection
+            if (_displayVoices.isNotEmpty)
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text('語音', style: TextStyle(fontSize: 18)),
+                  Expanded(
+                    child: DropdownButton<String>(
+                      isExpanded: true,
+                      value: _selectedVoiceName,
+                      items: _displayVoices.map((voice) {
+                        return DropdownMenuItem<String>(
+                          value: voice['name'],
+                          child: Text(
+                            voice['displayName']!,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        );
+                      }).toList(),
+                      onChanged: (name) {
+                        if (name != null) {
+                          final selectedVoiceMap = _displayVoices
+                              .firstWhere((v) => v['name'] == name);
+                          settings.setTtsVoice({
+                            'name': selectedVoiceMap['name']!,
+                            'locale': selectedVoiceMap['locale']!,
+                          });
+                          setState(() {
+                            _selectedVoiceName = name;
+                          });
+                        }
+                      },
+                    ),
+                  ),
+                ],
+              ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text(
+            '關閉',
+            style: TextStyle(color: Color(0xFF007AFF)),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class Word {
   final String level;
   final String english;
@@ -419,7 +671,8 @@ class Word {
 
 class WordQuizPage extends StatefulWidget {
   final String? initialLevel;
-  const WordQuizPage({super.key, this.initialLevel});
+  final int? initialWordIndex;
+  const WordQuizPage({super.key, this.initialLevel, this.initialWordIndex});
   @override
   State<WordQuizPage> createState() => _WordQuizPageState();
 }
@@ -448,43 +701,33 @@ class _WordQuizPageState extends State<WordQuizPage> {
   }
 
   Future<void> _initTts() async {
+    final settings = SettingsProvider.of(context);
     await flutterTts.setLanguage("en-US");
-    await flutterTts.setSpeechRate(0.4);
-    setTtsVoice();
+    await flutterTts.setSpeechRate(settings.speechRate);
+    await flutterTts.setPitch(settings.speechPitch);
+    if (settings.ttsVoice != null) {
+      await flutterTts.setVoice(settings.ttsVoice!);
+    }
+
     setState(() {
       ttsReady = true;
     });
 
-    // 新增語音結束監聽
     flutterTts.setCompletionHandler(() {
-      setState(() {
-        isSpeaking = false;
-      });
+      if (mounted) setState(() => isSpeaking = false);
     });
     flutterTts.setCancelHandler(() {
-      setState(() {
-        isSpeaking = false;
-      });
+      if (mounted) setState(() => isSpeaking = false);
     });
-  }
-
-  void setTtsVoice() async {
-    // 只選用美式英語 en-US 第一個 voice
-    List voicesRaw = await flutterTts.getVoices;
-    final voices = voicesRaw.where((v) => v['locale'] == 'en-US').toList();
-    if (voices.isNotEmpty) {
-      final voice = voices[0];
-      await flutterTts.setVoice({
-        "name": voice['name'],
-        "locale": voice['locale'],
-      });
-    }
+    flutterTts.setErrorHandler((msg) {
+      if (mounted) setState(() => isSpeaking = false);
+    });
   }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    setTtsVoice();
+    _initTts();
   }
 
   @override
@@ -494,25 +737,15 @@ class _WordQuizPageState extends State<WordQuizPage> {
   }
 
   Future<void> speakWord(String word) async {
-    if (isSpeaking) return;
-    // 如果單字包含 /，不發音
-    if (word.contains('/')) {
-      return;
-    }
-    setState(() {
-      isSpeaking = true;
-    });
+    if (isSpeaking || !ttsReady) return;
+    if (word.contains('/')) return;
+
+    setState(() => isSpeaking = true);
     try {
-      await flutterTts.stop();
-      setTtsVoice();
-      await Future.delayed(
-        const Duration(milliseconds: 100),
-      ); // 避免 stop/speak 太快破音
+      await _initTts(); // Re-initialize to apply latest settings
       await flutterTts.speak(word);
     } catch (e) {
-      setState(() {
-        isSpeaking = false;
-      });
+      if (mounted) setState(() => isSpeaking = false);
     }
   }
 
@@ -547,7 +780,7 @@ class _WordQuizPageState extends State<WordQuizPage> {
       knownWords = known;
       favoriteWords = favs;
       knownCount = known.length;
-      currentIndex = firstUnfamiliar < wordList.length ? firstUnfamiliar : 0;
+      currentIndex = widget.initialWordIndex ?? (firstUnfamiliar < wordList.length ? firstUnfamiliar : 0);
       isFinished = known.length >= words.length;
       showChinese = false;
       isLoading = false;
@@ -915,6 +1148,43 @@ class _WordQuizPageState extends State<WordQuizPage> {
   }
 }
 
+class WordListPage extends StatelessWidget {
+  final String level;
+  final List<Word> words;
+
+  const WordListPage({super.key, required this.level, required this.words});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('等級 $level - 單字列表'),
+      ),
+      body: ListView.builder(
+        itemCount: words.length,
+        itemBuilder: (context, index) {
+          final word = words[index];
+          return ListTile(
+            title: Text(word.english),
+            subtitle: Text(word.chinese),
+            onTap: () {
+              Navigator.pushReplacement(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => WordQuizPage(
+                    initialLevel: level,
+                    initialWordIndex: index,
+                  ),
+                ),
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
+}
+
 class FavoritePage extends StatefulWidget {
   final List<Word> favoriteWords;
   const FavoritePage({super.key, required this.favoriteWords});
@@ -1008,7 +1278,7 @@ class _QuizPageState extends State<QuizPage> {
     allWords = jsonResult.map((item) => Word.fromJson(item)).toList();
     allWords.shuffle();
     quizWords = allWords.take(10).toList();
-    // 預先產生每題的選項
+    // 預先產生每題の選項
     optionsList = quizWords.map((answer) {
       List<Word> options = [answer];
       List<Word> pool = allWords
