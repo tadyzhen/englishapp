@@ -1748,31 +1748,52 @@ class _AllWordsPageState extends State<AllWordsPage> {
       tempWords = tempWords
           .where((word) => word.english.toLowerCase().contains(query))
           .toList();
-    }
-
-    // Then, sort the (potentially filtered) words based on the selected sort order
-    if (_sortOrder == SortOrder.az) {
+      
+      // For search results, sort by relevance (exact match first, then starts with, then contains)
       tempWords.sort((a, b) {
-        // Primary sort: first letter of English word
-        int firstLetterComp = a.english[0].toLowerCase().compareTo(b.english[0].toLowerCase());
-        if (firstLetterComp != 0) return firstLetterComp;
-
-        // Secondary sort: level
-        int levelComp = int.parse(a.level).compareTo(int.parse(b.level));
-        if (levelComp != 0) return levelComp;
-
-        // Tertiary sort: full English word (for words with same first letter and level)
-        return a.english.toLowerCase().compareTo(b.english.toLowerCase());
+        String aLower = a.english.toLowerCase();
+        String bLower = b.english.toLowerCase();
+        
+        // Exact match gets highest priority
+        bool aExact = aLower == query;
+        bool bExact = bLower == query;
+        if (aExact && !bExact) return -1;
+        if (!aExact && bExact) return 1;
+        
+        // Words starting with query get second priority
+        bool aStarts = aLower.startsWith(query);
+        bool bStarts = bLower.startsWith(query);
+        if (aStarts && !bStarts) return -1;
+        if (!aStarts && bStarts) return 1;
+        
+        // For words with same relevance, sort alphabetically
+        return aLower.compareTo(bLower);
       });
-    } else if (_sortOrder == SortOrder.level) {
-      tempWords.sort((a, b) {
-        // Primary sort: level
-        int levelComp = int.parse(a.level).compareTo(int.parse(b.level));
-        if (levelComp != 0) return levelComp;
+    } else {
+      // When no search query, sort based on the selected sort order
+      if (_sortOrder == SortOrder.az) {
+        tempWords.sort((a, b) {
+          // Primary sort: first letter of English word
+          int firstLetterComp = a.english[0].toLowerCase().compareTo(b.english[0].toLowerCase());
+          if (firstLetterComp != 0) return firstLetterComp;
 
-        // Secondary sort: full English word (for words with same level)
-        return a.english.compareTo(b.english);
-      });
+          // Secondary sort: word length (shorter words first)
+          int lengthComp = a.english.length.compareTo(b.english.length);
+          if (lengthComp != 0) return lengthComp;
+
+          // Tertiary sort: alphabetical order for same length words
+          return a.english.toLowerCase().compareTo(b.english.toLowerCase());
+        });
+      } else if (_sortOrder == SortOrder.level) {
+        tempWords.sort((a, b) {
+          // Primary sort: level (1 to 6)
+          int levelComp = int.parse(a.level).compareTo(int.parse(b.level));
+          if (levelComp != 0) return levelComp;
+
+          // Secondary sort: alphabetical order within same level
+          return a.english.toLowerCase().compareTo(b.english.toLowerCase());
+        });
+      }
     }
 
     setState(() {
