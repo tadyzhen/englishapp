@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart' show rootBundle;
+import 'package:flutter/services.dart' show rootBundle, HapticFeedback;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:flutter/services.dart';
 import 'package:vibration/vibration.dart';
@@ -324,6 +326,20 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
     }
   }
 
+  Future<void> _launchURL(String word) async {
+    // Always use the part before "/" for dictionary lookup
+    final cleanWord = word.split('/').first.trim();
+    final url = 'https://dictionary.cambridge.org/zht/%E8%A9%9E%E5%85%B8/%E8%8B%B1%E8%AA%9E-%E6%BC%A2%E8%AA%9E-%E7%B9%81%E9%AB%94/$cleanWord';
+    final uri = Uri.parse(url);
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } else if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('無法開啟字典: $cleanWord')),
+      );
+    }
+  }
+
   Future<void> _showQuizOptions() async {
     final quizLevels = ['1', '2', '3', '4', '5', '6', '全部'];
     String? selectedLevel = '全部';
@@ -379,9 +395,23 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
                         child: TextField(
                           controller: countController,
                           keyboardType: TextInputType.number,
+                          textInputAction: TextInputAction.done,
+                          onSubmitted: (_) {
+                            // Handle Enter key press
+                            final count = int.tryParse(countController.text) ?? 0;
+                            if (count > 0 && count <= maxQuestions) {
+                              questionCount = count;
+                              Navigator.of(context).pop({
+                                'level': selectedLevel,
+                                'count': questionCount,
+                                'type': quizType,
+                              });
+                            }
+                          },
                           decoration: InputDecoration(
                             labelText: '題數 (1-$maxQuestions)',
                             border: const OutlineInputBorder(),
+                            hintText: '輸入後按 Enter 確認',
                             contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                           ),
                           onChanged: (value) {
@@ -2128,6 +2158,46 @@ class _AllWordsPageState extends State<AllWordsPage> {
   }
 
   void _filterWords() {
+    final query = _searchController.text.toLowerCase().trim();
+    if (query.isEmpty) {
+      setState(() {
+        _filteredWords = List.from(_allWords);
+      });
+    } else {
+      setState(() {
+        _filteredWords = _allWords
+            .where((word) =>
+                word.english.toLowerCase().contains(query) ||
+                word.chinese.contains(query))
+            .toList();
+      });
+      
+      // Show dialog if no results found
+      if (_filteredWords.isEmpty && query.isNotEmpty) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          showDialog(
+            context: context,
+            builder: (context) => AlertDialog(
+              title: const Text('找不到單字'),
+              content: Text('找不到 "$query"，是否要在劍橋辭典中搜尋？'),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('取消'),
+                ),
+                TextButton(
+                  onPressed: () {
+                    Navigator.pop(context);
+                    _launchURL(query);
+                  },
+                  child: const Text('前往劍橋辭典'),
+                ),
+              ],
+            ),
+          );
+        });
+      }
+    }
     _filterAndSortWords();
   }
 
@@ -2275,44 +2345,49 @@ class _AllWordsPageState extends State<AllWordsPage> {
               itemCount: _filteredWords.length,
               itemBuilder: (context, index) {
                 final word = _filteredWords[index];
-                // Track press duration for tap vs long press
-                DateTime? pressStartTime;
+                // Get the first part before "/" for dictionary lookup
+                final lookupWord = word.english.split('/').first.trim();
+                bool isPressing = false;
+                Timer? longPressTimer;
                 
-                return GestureDetector(
-                  onTapDown: (_) {
-                    pressStartTime = DateTime.now();
-                    // Trigger haptic feedback on press down
-                    AppUtils.triggerHapticFeedback();
+                return StatefulBuilder(
+                  builder: (context, setState) {
+                    return GestureDetector(
+                      onTapDown: (_) {
+                        setState(() => isPressing = true);
+                        // Stronger haptic feedback
+                        HapticFeedback.heavyImpact();
+                        
+                        // Set timer for dictionary launch (0.5s)
+                        longPressTimer = Timer(const Duration(milliseconds: 500), () {
+                          if (mounted) {
+                            _launchURL(lookupWord);
+                          }
+                        });
+                      },
+                      onTapUp: (_) {
+                        longPressTimer?.cancel();
+                        if (mounted) {
+                          setState(() => isPressing = false);
+                        }
+                      },
+                      onTapCancel: () {
+                        longPressTimer?.cancel();
+                        if (mounted) {
+                          setState(() => isPressing = false);
+                        }
+                      },
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 50),
+                        color: isPressing ? Colors.grey[200] : null,
+                        child: ListTile(
+                          title: Text(word.english),
+                          subtitle: Text('等級 ${word.level} - ${word.chinese}'),
+                          trailing: const Icon(Icons.launch, size: 16, color: Colors.blue),
+                        ),
+                      ),
+                    );
                   },
-                  onTapUp: (_) async {
-                    if (pressStartTime != null) {
-                      final pressDuration = DateTime.now().difference(pressStartTime!);
-                      if (pressDuration.inMilliseconds <= 800) {
-                        // Short press (<= 0.8s) - show Chinese translation
-                        if (!mounted) return;
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text(word.chinese),
-                            duration: const Duration(seconds: 2),
-                          ),
-                        );
-                      } else {
-                        // Long press (> 0.8s) - open dictionary
-                        await _launchURL(word.english);
-                      }
-                    }
-                  },
-                  onTapCancel: () {
-                    pressStartTime = null;
-                  },
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 50),
-                    color: pressStartTime != null ? Colors.grey[200] : null,
-                    child: ListTile(
-                      title: Text(word.english),
-                      subtitle: Text('等級 ${word.level} - ${word.chinese}'),
-                    ),
-                  ),
                 );
               },
             ),
