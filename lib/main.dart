@@ -2275,10 +2275,44 @@ class _AllWordsPageState extends State<AllWordsPage> {
               itemCount: _filteredWords.length,
               itemBuilder: (context, index) {
                 final word = _filteredWords[index];
-                return ListTile(
-                  title: Text(word.english),
-                  subtitle: Text('等級 ${word.level} - ${word.chinese}'),
-                  onTap: () => _launchURL(word.english),
+                // Track press duration for tap vs long press
+                DateTime? pressStartTime;
+                
+                return GestureDetector(
+                  onTapDown: (_) {
+                    pressStartTime = DateTime.now();
+                    // Trigger haptic feedback on press down
+                    AppUtils.triggerHapticFeedback();
+                  },
+                  onTapUp: (_) async {
+                    if (pressStartTime != null) {
+                      final pressDuration = DateTime.now().difference(pressStartTime!);
+                      if (pressDuration.inMilliseconds <= 800) {
+                        // Short press (<= 0.8s) - show Chinese translation
+                        if (!mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(word.chinese),
+                            duration: const Duration(seconds: 2),
+                          ),
+                        );
+                      } else {
+                        // Long press (> 0.8s) - open dictionary
+                        await _launchURL(word.english);
+                      }
+                    }
+                  },
+                  onTapCancel: () {
+                    pressStartTime = null;
+                  },
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 50),
+                    color: pressStartTime != null ? Colors.grey[200] : null,
+                    child: ListTile(
+                      title: Text(word.english),
+                      subtitle: Text('等級 ${word.level} - ${word.chinese}'),
+                    ),
+                  ),
                 );
               },
             ),
