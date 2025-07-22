@@ -281,55 +281,186 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
     );
   }
 
+  // 取得指定等級的單字數量
+  Future<int> _getWordCountForLevel(String level) async {
+    try {
+      String data = await rootBundle.loadString('assets/words.json');
+      List<dynamic> jsonResult = json.decode(data);
+      List<Word> words = jsonResult.map((item) => Word.fromJson(item)).toList();
+      
+      if (level == '全部') {
+        return words.length;
+      }
+      return words.where((word) => word.level == level).length;
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('載入單字時發生錯誤: $e')),
+        );
+      }
+      return 10; // Default to 10 questions if there's an error
+    }
+  }
+
   Future<void> _showQuizOptions() async {
     final quizLevels = ['1', '2', '3', '4', '5', '6', '全部'];
-    final selectedLevel = await showDialog<String>(
+    String? selectedLevel = '全部';
+    int questionCount = 10;
+    int maxQuestions = 10;
+    String quizType = 'ch2en';
+    final TextEditingController countController = TextEditingController(text: '10');
+
+    await showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('選擇測驗等級'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: quizLevels
-                .map((level) => ListTile(
-                      title: Text('等級 $level'),
-                      onTap: () => Navigator.pop(ctx, level),
-                    ))
-                .toList(),
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setState) {
+          return AlertDialog(
+            title: const Text('測驗設定'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // 測驗等級選擇
+                  const Text('1. 選擇測驗等級', style: TextStyle(fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8.0,
+                    children: quizLevels.map((level) {
+                      final isSelected = selectedLevel == level;
+                      return FilterChip(
+                        label: Text('等級 $level'),
+                        selected: isSelected,
+                        onSelected: (selected) async {
+                          if (selected) {
+                            selectedLevel = level;
+                            // 更新最大題數
+                            maxQuestions = await _getWordCountForLevel(level);
+                            if (questionCount > maxQuestions) {
+                              questionCount = maxQuestions;
+                              countController.text = questionCount.toString();
+                            }
+                            setState(() {});
+                          }
+                        },
+                      );
+                    }).toList(),
+                  ),
+                  const SizedBox(height: 16),
+                  
+                  // 題數選擇
+                  const Text('2. 選擇測驗題數', style: TextStyle(fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: countController,
+                          keyboardType: TextInputType.number,
+                          decoration: InputDecoration(
+                            labelText: '題數 (1-$maxQuestions)',
+                            border: const OutlineInputBorder(),
+                            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          ),
+                          onChanged: (value) {
+                            final count = int.tryParse(value) ?? 0;
+                            if (count > 0 && count <= maxQuestions) {
+                              questionCount = count;
+                            }
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Text('最多: $maxQuestions 題'),
+                    ],
+                  ),
+                  Slider(
+                    value: questionCount.toDouble(),
+                    min: 1,
+                    max: maxQuestions.toDouble(),
+                    divisions: maxQuestions - 1,
+                    label: questionCount.toString(),
+                    onChanged: (value) {
+                      questionCount = value.toInt();
+                      countController.text = questionCount.toString();
+                      setState(() {});
+                    },
+                  ),
+                  const SizedBox(height: 16),
+                  
+                  // 測驗模式選擇
+                  const Text('3. 選擇測驗模式', style: TextStyle(fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+                  Column(
+                    children: [
+                      RadioListTile<String>(
+                        title: const Text('題目顯示中文（選英文）'),
+                        value: 'ch2en',
+                        groupValue: quizType,
+                        onChanged: (value) {
+                          quizType = value!;
+                          setState(() {});
+                        },
+                      ),
+                      RadioListTile<String>(
+                        title: const Text('題目顯示英文（選中文）'),
+                        value: 'en2ch',
+                        groupValue: quizType,
+                        onChanged: (value) {
+                          quizType = value!;
+                          setState(() {});
+                        },
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('取消'),
+              ),
+              ElevatedButton(
+                onPressed: () {
+                  if (selectedLevel != null) {
+                    Navigator.pop(ctx, {
+                      'level': selectedLevel,
+                      'count': questionCount,
+                      'type': quizType,
+                    });
+                  }
+                },
+                child: const Text('開始測驗'),
+              ),
+            ],
+          );
+        },
+      ),
+    ).then((result) async {
+      if (result != null) {
+        final level = result['level'] as String;
+        final count = result['count'] as int;
+        final type = result['type'] as String;
+        
+        // 檢查題數是否有效
+        final wordCount = await _getWordCountForLevel(level);
+        final finalCount = count > wordCount ? wordCount : count;
+        
+        if (!mounted) return;
+        
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => QuizPage(
+              type: type,
+              level: level,
+              questionCount: finalCount,
+            ),
           ),
-        ),
-      ),
-    );
-
-    if (selectedLevel == null) return;
-
-    final type = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('選擇題型'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              title: const Text('題目顯示中文（選英文）'),
-              onTap: () => Navigator.pop(ctx, 'ch2en'),
-            ),
-            ListTile(
-              title: const Text('題目顯示英文（選中文）'),
-              onTap: () => Navigator.pop(ctx, 'en2ch'),
-            ),
-          ],
-        ),
-      ),
-    );
-
-    if (type != null) {
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-            builder: (_) => QuizPage(type: type, level: selectedLevel)),
-      );
-    }
+        );
+      }
+    });
   }
 
   Future<List<Word>> _loadWordsForLevel(String level) async {
@@ -1432,7 +1563,13 @@ class _FavoritePageState extends State<FavoritePage> {
 class QuizPage extends StatefulWidget {
   final String type; // 'ch2en' or 'en2ch'
   final String level;
-  const QuizPage({super.key, required this.type, required this.level});
+  final int questionCount;
+  const QuizPage({
+    super.key, 
+    required this.type, 
+    required this.level,
+    this.questionCount = 10, // Default to 10 if not specified
+  });
   @override
   State<QuizPage> createState() => _QuizPageState();
 }
@@ -1464,7 +1601,11 @@ class _QuizPageState extends State<QuizPage> {
       filteredWords = allWords.where((w) => w.level == widget.level).toList();
     }
     filteredWords.shuffle();
-    quizWords = filteredWords.take(10).toList();
+    // Use the questionCount from widget or default to 10 if not specified
+    final count = widget.questionCount > filteredWords.length 
+        ? filteredWords.length 
+        : widget.questionCount;
+    quizWords = filteredWords.take(count).toList();
 
     // 預先產生每題的選項
     optionsList = quizWords.map((answer) {
