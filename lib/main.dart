@@ -2397,3 +2397,60 @@ class _AllWordsPageState extends State<AllWordsPage> {
     );
   }
 }
+
+
+class WordCard extends StatefulWidget {
+  final String word;
+  const WordCard({super.key, required this.word});
+
+  @override
+  State<WordCard> createState() => _WordCardState();
+}
+
+class _WordCardState extends State<WordCard> {
+  double _scale = 1.0;
+  Timer? _holdTimer;
+
+  void _onTapDown(TapDownDetails details) {
+    setState(() => _scale = 0.95);
+    AppUtils.triggerHapticFeedback();
+
+    _holdTimer = Timer(const Duration(milliseconds: 500), () {
+      _navigateToCambridge();
+    });
+  }
+
+  void _onTapUp(TapUpDetails details) {
+    setState(() => _scale = 1.0);
+    _holdTimer?.cancel();
+  }
+
+  void _onTapCancel() {
+    setState(() => _scale = 1.0);
+    _holdTimer?.cancel();
+  }
+
+  void _navigateToCambridge() {
+    final url = 'https://dictionary.cambridge.org/dictionary/english/\${widget.word}';
+    launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTapDown: _onTapDown,
+      onTapUp: _onTapUp,
+      onTapCancel: _onTapCancel,
+      child: AnimatedScale(
+        duration: const Duration(milliseconds: 100),
+        scale: _scale,
+        child: Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Text(widget.word, style: const TextStyle(fontSize: 24)),
+          ),
+        ),
+      ),
+    );
+  }
+}
