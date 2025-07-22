@@ -270,57 +270,50 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
       body: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                Expanded(
-                  child: ElevatedButton.icon(
-                    icon: const Icon(Icons.quiz),
-                    label: const Text('測驗'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Theme.of(context).colorScheme.primary,
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(18),
-                      ),
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                    ),
-                    onPressed: () async {
-                      // 題型選擇
-                      final type = await showDialog<String>(
-                        context: context,
-                        builder: (ctx) => AlertDialog(
-                          title: const Text('選擇題型'),
-                          content: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              ListTile(
-                                title: const Text('題目顯示中文（選英文）'),
-                                onTap: () => Navigator.pop(ctx, 'ch2en'),
-                              ),
-                              ListTile(
-                                title: const Text('題目顯示英文（選中文）'),
-                                onTap: () => Navigator.pop(ctx, 'en2ch'),
-                              ),
-                            ],
-                          ),
-                        ),
-                      );
-                      if (type != null) {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => QuizPage(type: type),
-                          ),
-                        );
-                      }
-                    },
+            SizedBox(
+              width: 300,
+              child: ElevatedButton.icon(
+                icon: const Icon(Icons.quiz),
+                label: const Text('測驗'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Theme.of(context).colorScheme.primary,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(18),
                   ),
+                  padding: const EdgeInsets.symmetric(vertical: 16),
                 ),
-                const SizedBox(width: 24),
-                // 其他主功能按鈕可加在這裡
-              ],
+                onPressed: () async {
+                  // 題型選擇
+                  final type = await showDialog<String>(
+                    context: context,
+                    builder: (ctx) => AlertDialog(
+                      title: const Text('選擇題型'),
+                      content: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          ListTile(
+                            title: const Text('題目顯示中文（選英文）'),
+                            onTap: () => Navigator.pop(ctx, 'ch2en'),
+                          ),
+                          ListTile(
+                            title: const Text('題目顯示英文（選中文）'),
+                            onTap: () => Navigator.pop(ctx, 'en2ch'),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                  if (type != null) {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => QuizPage(type: type)),
+                    );
+                  }
+                },
+              ),
             ),
             const SizedBox(height: 24),
             Expanded(
@@ -1120,13 +1113,37 @@ class _QuizPageState extends State<QuizPage> {
                       crossAxisCount: 2,
                       mainAxisSpacing: 12,
                       crossAxisSpacing: 12,
-                      childAspectRatio: 1.15,
+                      childAspectRatio: 1.0,
                       physics: const NeverScrollableScrollPhysics(),
                       padding: EdgeInsets.zero,
                       children: List.generate(4, (i) {
                         final opt = options[i];
                         final isCorrect = i == correctIdx;
                         final isSelected = selected == i;
+                        Color? cardColor = Theme.of(context).cardColor;
+                        Color? borderColor = Colors.grey[300];
+                        BoxShadow? boxShadow;
+
+                        if (answered) {
+                          if (isCorrect) {
+                            cardColor = Colors.green[300];
+                            borderColor = Colors.green;
+                            boxShadow = BoxShadow(
+                              color: Colors.green.withOpacity(0.2),
+                              blurRadius: 8,
+                              offset: const Offset(0, 4),
+                            );
+                          } else if (isSelected) {
+                            cardColor = Colors.red[300];
+                            borderColor = Colors.red;
+                            boxShadow = BoxShadow(
+                              color: Colors.red.withOpacity(0.2),
+                              blurRadius: 8,
+                              offset: const Offset(0, 4),
+                            );
+                          }
+                        }
+
                         return GestureDetector(
                           onTap: answered
                               ? null
@@ -1139,50 +1156,56 @@ class _QuizPageState extends State<QuizPage> {
                           child: AnimatedContainer(
                             duration: const Duration(milliseconds: 200),
                             decoration: BoxDecoration(
-                              color: isSelected
-                                  ? (isCorrect
-                                        ? Colors.green[300]
-                                        : Colors.red[300])
-                                  : Theme.of(context).cardColor,
+                              color: cardColor,
                               borderRadius: BorderRadius.circular(18),
-                              border: Border.all(
-                                color: isSelected
-                                    ? (isCorrect ? Colors.green : Colors.red)
-                                    : Colors.grey[300]!,
-                                width: 2,
-                              ),
-                              boxShadow: [
-                                if (isSelected)
-                                  BoxShadow(
-                                    color:
-                                        (isCorrect ? Colors.green : Colors.red)
-                                            .withOpacity(0.2),
-                                    blurRadius: 8,
-                                    offset: const Offset(0, 4),
-                                  ),
-                              ],
+                              border: Border.all(color: borderColor!, width: 2),
+                              boxShadow: boxShadow != null ? [boxShadow] : [],
                             ),
                             margin: EdgeInsets.zero,
                             padding: const EdgeInsets.all(8),
-                            child: Center(
-                              child: FittedBox(
-                                fit: BoxFit.contain,
-                                child: Text(
-                                  widget.type == 'ch2en'
-                                      ? opt.english
-                                      : opt.chinese,
-                                  style: TextStyle(
-                                    fontSize: 36,
-                                    fontWeight: FontWeight.bold,
-                                    color: isSelected
-                                        ? Colors.black
-                                        : Theme.of(
-                                            context,
-                                          ).textTheme.bodyLarge?.color,
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Expanded(
+                                  child: Center(
+                                    child: FittedBox(
+                                      fit: BoxFit.contain,
+                                      child: Text(
+                                        widget.type == 'ch2en'
+                                            ? opt.english
+                                            : opt.chinese,
+                                        style: TextStyle(
+                                          fontSize: 36,
+                                          fontWeight: FontWeight.bold,
+                                          color: isSelected
+                                              ? Colors.black
+                                              : Theme.of(
+                                                  context,
+                                                ).textTheme.bodyLarge?.color,
+                                        ),
+                                        textAlign: TextAlign.center,
+                                      ),
+                                    ),
                                   ),
-                                  textAlign: TextAlign.center,
                                 ),
-                              ),
+                                if (answered) ...[
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    widget.type == 'ch2en'
+                                        ? opt.chinese
+                                        : opt.english,
+                                    style: TextStyle(
+                                      fontSize: 18,
+                                      color: isSelected
+                                          ? Colors.black87
+                                          : Theme.of(
+                                              context,
+                                            ).textTheme.bodySmall?.color,
+                                    ),
+                                    textAlign: TextAlign.center,
+                                  ),
+                                ],
+                              ],
                             ),
                           ),
                         );
@@ -1190,35 +1213,6 @@ class _QuizPageState extends State<QuizPage> {
                     ),
                   ),
                   const SizedBox(height: 16),
-                  if (answered)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 8),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Divider(),
-                          const Text(
-                            '選項解釋：',
-                            style: TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          ...options.map(
-                            (w) => Padding(
-                              padding: const EdgeInsets.symmetric(vertical: 1),
-                              child: Text(
-                                '${w.english}  -  ${w.chinese}',
-                                style: const TextStyle(
-                                  fontSize: 14,
-                                  height: 1.2,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
                 ],
               ),
             ),
