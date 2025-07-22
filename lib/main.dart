@@ -4,6 +4,8 @@ import 'package:flutter/services.dart' show rootBundle;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'dart:math' as math;
+import 'package:url_launcher/url_launcher.dart';
+
 
 // ========== AppSettings 狀態管理 ==========
 class AppSettings extends ChangeNotifier {
@@ -1717,20 +1719,6 @@ class _AllWordsPageState extends State<AllWordsPage> {
   final TextEditingController _searchController = TextEditingController();
   SortOrder _sortOrder = SortOrder.az;
 
-  // Simulated data for demonstration
-  final Map<String, Map<String, String>> _extraWordData = {
-    'abandon': {
-      'synonyms': 'give up, desert, forsake',
-      'antonyms': 'keep, continue, maintain',
-      'example': 'He had to abandon his plan to build a house.'
-    },
-    'ability': {
-      'synonyms': 'capability, skill, talent',
-      'antonyms': 'inability, incapacity',
-      'example': 'She has the ability to solve complex problems.'
-    }
-  };
-
   @override
   void initState() {
     super.initState();
@@ -1742,23 +1730,7 @@ class _AllWordsPageState extends State<AllWordsPage> {
     String data = await rootBundle.loadString('assets/words.json');
     List<dynamic> jsonResult = json.decode(data);
     setState(() {
-      _allWords = jsonResult.map((item) {
-        final word = Word.fromJson(item);
-        final extraData = _extraWordData[word.english];
-        if (extraData != null) {
-          return Word(
-            level: word.level,
-            english: word.english,
-            pos: word.pos,
-            engPos: word.engPos,
-            chinese: word.chinese,
-            synonyms: extraData['synonyms'],
-            antonyms: extraData['antonyms'],
-            example: extraData['example'],
-          );
-        }
-        return word;
-      }).toList();
+      _allWords = jsonResult.map((item) => Word.fromJson(item)).toList();
       _filterAndSortWords();
     });
   }
@@ -1769,22 +1741,36 @@ class _AllWordsPageState extends State<AllWordsPage> {
 
   void _filterAndSortWords() {
     List<Word> tempWords = List.from(_allWords);
-
-    // Filtering
     final query = _searchController.text.toLowerCase();
+
+    // First, filter the words based on the search query
     if (query.isNotEmpty) {
       tempWords = tempWords
           .where((word) => word.english.toLowerCase().contains(query))
           .toList();
     }
 
-    // Sorting
+    // Then, sort the (potentially filtered) words based on the selected sort order
     if (_sortOrder == SortOrder.az) {
-      tempWords.sort((a, b) => a.english.compareTo(b.english));
+      tempWords.sort((a, b) {
+        // Primary sort: first letter of English word
+        int firstLetterComp = a.english[0].toLowerCase().compareTo(b.english[0].toLowerCase());
+        if (firstLetterComp != 0) return firstLetterComp;
+
+        // Secondary sort: level
+        int levelComp = int.parse(a.level).compareTo(int.parse(b.level));
+        if (levelComp != 0) return levelComp;
+
+        // Tertiary sort: full English word (for words with same first letter and level)
+        return a.english.toLowerCase().compareTo(b.english.toLowerCase());
+      });
     } else if (_sortOrder == SortOrder.level) {
       tempWords.sort((a, b) {
-        int levelComp = a.level.compareTo(b.level);
+        // Primary sort: level
+        int levelComp = int.parse(a.level).compareTo(int.parse(b.level));
         if (levelComp != 0) return levelComp;
+
+        // Secondary sort: full English word (for words with same level)
         return a.english.compareTo(b.english);
       });
     }
@@ -1794,43 +1780,11 @@ class _AllWordsPageState extends State<AllWordsPage> {
     });
   }
 
-  void _showWordDetailsDialog(Word word) {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(word.english, style: const TextStyle(fontWeight: FontWeight.bold)),
-        content: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text('${word.pos} ${word.chinese}'),
-              if (word.synonyms != null) ...[
-                const SizedBox(height: 16),
-                const Text('同義字:', style: TextStyle(fontWeight: FontWeight.bold)),
-                Text(word.synonyms!),
-              ],
-              if (word.antonyms != null) ...[
-                const SizedBox(height: 16),
-                const Text('反義字:', style: TextStyle(fontWeight: FontWeight.bold)),
-                Text(word.antonyms!),
-              ],
-              if (word.example != null) ...[
-                const SizedBox(height: 16),
-                const Text('例句:', style: TextStyle(fontWeight: FontWeight.bold)),
-                Text(word.example!),
-              ],
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('關閉'),
-          ),
-        ],
-      ),
-    );
+  Future<void> _launchURL(String word) async {
+    final Uri url = Uri.parse('https://dictionary.cambridge.org/dictionary/english-chinese-traditional/$word');
+    if (!await launchUrl(url)) {
+      throw Exception('Could not launch $url');
+    }
   }
 
   @override
@@ -1901,7 +1855,7 @@ class _AllWordsPageState extends State<AllWordsPage> {
                 return ListTile(
                   title: Text(word.english),
                   subtitle: Text('等級 ${word.level} - ${word.chinese}'),
-                  onTap: () => _showWordDetailsDialog(word),
+                  onTap: () => _launchURL(word.english),
                 );
               },
             ),
