@@ -218,7 +218,7 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
     );
   }
 
-  Future<void> _showLevelOptionsDialog(String level) async {
+  Future<void> _showLevelOptionsDialog(String level, {required bool hasProgress}) async {
     final words = await _loadWordsForLevel(level);
     if (!mounted) return;
 
@@ -229,18 +229,6 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
         content: const Text('請選擇一個選項'),
         actions: [
           TextButton(
-            child: const Text('繼續'),
-            onPressed: () {
-              Navigator.of(ctx).pop();
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => WordQuizPage(initialLevel: level),
-                ),
-              );
-            },
-          ),
-          TextButton(
             child: const Text('選擇單字'),
             onPressed: () {
               Navigator.of(ctx).pop();
@@ -248,6 +236,18 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
                 context,
                 MaterialPageRoute(
                   builder: (_) => WordListPage(level: level, words: words),
+                ),
+              );
+            },
+          ),
+          TextButton(
+            child: Text(hasProgress ? '繼續' : '開始'),
+            onPressed: () {
+              Navigator.of(ctx).pop();
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => WordQuizPage(initialLevel: level),
                 ),
               );
             },
@@ -385,8 +385,11 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
                 itemBuilder: (context, idx) {
                   final level = levels[idx];
                   return GestureDetector(
-                    onTap: () {
-                      _showLevelOptionsDialog(level);
+                    onTap: () async {
+                      final prefs = await SharedPreferences.getInstance();
+                      final knownWords = prefs.getStringList('known_$level') ?? [];
+                      final hasProgress = knownWords.isNotEmpty;
+                      _showLevelOptionsDialog(level, hasProgress: hasProgress);
                     },
                     child: AnimatedContainer(
                       duration: const Duration(milliseconds: 200),
@@ -790,14 +793,20 @@ class _WordQuizPageState extends State<WordQuizPage> {
     List<Word> wordList = List<Word>.from(temp[level] ?? []);
     Set<String> known = prefs.getStringList('known_$level')?.toSet() ?? {};
     Set<String> favs = prefs.getStringList('favorite_words')?.toSet() ?? {};
-    int firstUnfamiliar = 0;
-    for (int i = 0; i < wordList.length; i++) {
-      if (!known.contains(wordList[i].english)) {
-        firstUnfamiliar = i;
-        break;
+    
+    int firstUnfamiliar = -1;
+    if (widget.initialWordIndex != null) {
+      firstUnfamiliar = widget.initialWordIndex!;
+    } else {
+      for (int i = 0; i < wordList.length; i++) {
+        if (!known.contains(wordList[i].english)) {
+          firstUnfamiliar = i;
+          break;
+        }
       }
-      if (i == wordList.length - 1) firstUnfamiliar = wordList.length;
+      if (firstUnfamiliar == -1) firstUnfamiliar = 0;
     }
+
     setState(() {
       levelWords = temp;
       selectedLevel = level;
@@ -805,17 +814,35 @@ class _WordQuizPageState extends State<WordQuizPage> {
       knownWords = known;
       favoriteWords = favs;
       knownCount = known.length;
-      currentIndex = widget.initialWordIndex ?? (firstUnfamiliar < wordList.length ? firstUnfamiliar : 0);
+      currentIndex = firstUnfamiliar;
       isFinished = known.length >= words.length;
       showChinese = false;
       isLoading = false;
     });
-    // 自動播放語音
+
     final settings = SettingsProvider.of(context);
     if (settings.autoSpeak && words.isNotEmpty && !isFinished) {
       await Future.delayed(const Duration(milliseconds: 300));
       speakWord(words[currentIndex].english);
     }
+  }
+
+  int _findNextUnfamiliarIndex(int fromIndex) {
+    for (int i = fromIndex + 1; i < words.length; i++) {
+      if (!knownWords.contains(words[i].english)) {
+        return i;
+      }
+    }
+    return -1; // No more unfamiliar words
+  }
+
+  int _findPreviousUnfamiliarIndex(int fromIndex) {
+    for (int i = fromIndex - 1; i >= 0; i--) {
+      if (!knownWords.contains(words[i].english)) {
+        return i;
+      }
+    }
+    return -1; // No previous unfamiliar words
   }
 
   Future<void> handleSwipe(bool known) async {
@@ -827,16 +854,19 @@ class _WordQuizPageState extends State<WordQuizPage> {
       knownWords.add(wordKey);
       await prefs.setStringList(key, knownWords.toList());
     }
+
+    final nextIndex = _findNextUnfamiliarIndex(currentIndex);
+
     setState(() {
       if (known) knownCount = knownWords.length;
-      if (currentIndex < words.length - 1) {
-        currentIndex++;
+      if (nextIndex != -1) {
+        currentIndex = nextIndex;
         showChinese = false;
       } else {
-        isFinished = knownWords.length >= words.length;
+        isFinished = true;
       }
     });
-    // 自動播放語音
+
     final settings = SettingsProvider.of(context);
     if (settings.autoSpeak && !isFinished && currentIndex < words.length) {
       await Future.delayed(const Duration(milliseconds: 300));
@@ -845,9 +875,10 @@ class _WordQuizPageState extends State<WordQuizPage> {
   }
 
   void goToPreviousWord() {
-    if (currentIndex > 0) {
+    final prevIndex = _findPreviousUnfamiliarIndex(currentIndex);
+    if (prevIndex != -1) {
       setState(() {
-        currentIndex--;
+        currentIndex = prevIndex;
         showChinese = false;
       });
     }
@@ -1082,108 +1113,123 @@ class _WordQuizPageState extends State<WordQuizPage> {
                                 width: 1.2,
                               ),
                             ),
-                            child: Stack(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
                               children: [
-                                // 星星圖案
-                                if (favoriteWords.contains(
-                                  words[currentIndex].english,
-                                ))
-                                  Positioned(
-                                    top: 0,
-                                    right: 0,
-                                    child: Icon(
-                                      Icons.star,
-                                      color: Colors.amber,
-                                      size: 36,
-                                    ),
-                                  ),
-                                // 單字內容
-                                Column(
+                                Row(
                                   mainAxisAlignment: MainAxisAlignment.center,
                                   children: [
-                                    Row(
-                                      mainAxisAlignment: MainAxisAlignment.center,
-                                      children: [
-                                        Flexible(
-                                          child: Text(
-                                            words[currentIndex].english,
-                                            style: TextStyle(
-                                              fontSize: 48,
-                                              fontWeight: FontWeight.bold,
-                                              color:
-                                                  Theme.of(context).brightness ==
-                                                      Brightness.dark
-                                                  ? Colors.white
-                                                  : const Color(0xFF222222),
-                                            ),
-                                            softWrap: true,
-                                            overflow: TextOverflow.visible,
-                                            // maxLines: 2, // 可視需求加上
-                                          ),
+                                    Flexible(
+                                      child: Text(
+                                        words[currentIndex].english,
+                                        style: TextStyle(
+                                          fontSize: 48,
+                                          fontWeight: FontWeight.bold,
+                                          color:
+                                              Theme.of(context).brightness ==
+                                                  Brightness.dark
+                                              ? Colors.white
+                                              : const Color(0xFF222222),
                                         ),
-                                        IconButton(
-                                          icon: const Icon(
-                                            Icons.volume_up,
-                                            size: 36,
-                                            color: Color(0xFF007AFF),
-                                          ),
-                                          onPressed: isSpeaking
-                                              ? null
-                                              : () => speakWord(
-                                                  words[currentIndex].english,
-                                                ),
-                                        ),
-                                      ],
-                                    ),
-                                    const SizedBox(height: 18),
-                                    Text(
-                                      words[currentIndex].pos,
-                                      style: TextStyle(
-                                        fontSize: 22,
-                                        color:
-                                            Theme.of(context).brightness ==
-                                                Brightness.dark
-                                            ? Colors.white70
-                                            : const Color(0xFF888888),
+                                        softWrap: true,
+                                        overflow: TextOverflow.visible,
+                                        // maxLines: 2, // 可視需求加上
                                       ),
-                                      overflow: TextOverflow.ellipsis,
-                                      maxLines: 1,
                                     ),
-                                    const SizedBox(height: 24),
-                                    AnimatedSwitcher(
-                                      duration: const Duration(milliseconds: 80),
-                                      child: showChinese
-                                          ? Text(
-                                              words[currentIndex].chinese,
-                                              key: const ValueKey('chinese'),
-                                              style: TextStyle(
-                                                fontSize: 32,
-                                                color:
-                                                    Theme.of(context).brightness ==
-                                                        Brightness.dark
-                                                    ? Colors.blue[200]
-                                                    : const Color(0xFF007AFF),
-                                                fontWeight: FontWeight.w600,
-                                              ),
-                                              overflow: TextOverflow.ellipsis,
-                                              maxLines: 1,
-                                            )
-                                          : const SizedBox.shrink(),
+                                    IconButton(
+                                      icon: const Icon(
+                                        Icons.volume_up,
+                                        size: 36,
+                                        color: Color(0xFF007AFF),
+                                      ),
+                                      onPressed: isSpeaking
+                                          ? null
+                                          : () => speakWord(
+                                              words[currentIndex].english,
+                                            ),
                                     ),
                                   ],
+                                ),
+                                const SizedBox(height: 18),
+                                Text(
+                                  words[currentIndex].pos,
+                                  style: TextStyle(
+                                    fontSize: 22,
+                                    color:
+                                        Theme.of(context).brightness ==
+                                            Brightness.dark
+                                        ? Colors.white70
+                                        : const Color(0xFF888888),
+                                  ),
+                                  overflow: TextOverflow.ellipsis,
+                                  maxLines: 1,
+                                ),
+                                const SizedBox(height: 24),
+                                AnimatedSwitcher(
+                                  duration: const Duration(milliseconds: 80),
+                                  child: showChinese
+                                      ? Text(
+                                          words[currentIndex].chinese,
+                                          key: const ValueKey('chinese'),
+                                          style: TextStyle(
+                                            fontSize: 32,
+                                            color:
+                                                Theme.of(context).brightness ==
+                                                    Brightness.dark
+                                                ? Colors.blue[200]
+                                                : const Color(0xFF007AFF),
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                          overflow: TextOverflow.ellipsis,
+                                          maxLines: 1,
+                                        )
+                                      : const SizedBox.shrink(),
                                 ),
                               ],
                             ),
                           ),
-                          if (currentIndex > 0)
-                            Positioned(
-                              top: 110,
-                              right: 40,
-                              child: IconButton(
-                                icon: const Icon(Icons.arrow_back_ios_new),
-                                onPressed: goToPreviousWord,
+                          // 星星圖案
+                          Positioned(
+                            top: 110,
+                            left: 40,
+                            child: IconButton(
+                              icon: Icon(
+                                favoriteWords.contains(words[currentIndex].english)
+                                    ? Icons.star
+                                    : Icons.star_border,
+                                color: Colors.amber,
+                                size: 36,
                               ),
+                              onPressed: () async {
+                                final word = words[currentIndex].english;
+                                if (favoriteWords.contains(word)) {
+                                  favoriteWords.remove(word);
+                                  final prefs = await SharedPreferences.getInstance();
+                                  await prefs.setStringList(
+                                    'favorite_words',
+                                    favoriteWords.toList(),
+                                  );
+                                  if (mounted) {
+                                    ScaffoldMessenger.of(
+                                      context,
+                                    ).showSnackBar(SnackBar(content: Text('已移除收藏')));
+                                  }
+                                } else {
+                                  await addToFavorite(word);
+                                }
+                                setState(() {});
+                              },
                             ),
+                          ),
+                          // Previous word button
+                          Positioned(
+                            top: 110,
+                            right: 40,
+                            child: IconButton(
+                              icon: const Icon(Icons.undo),
+                              onPressed: goToPreviousWord,
+                            ),
+                          ),
                         ],
                       ),
                     ),
