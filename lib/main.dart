@@ -3,9 +3,31 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_tts/flutter_tts.dart';
-import 'dart:math' as math;
-import 'package:url_launcher/url_launcher.dart';
+import 'package:flutter/services.dart';
+import 'package:vibration/vibration.dart';
+import 'dictionary_webview.dart';
 
+// Utility class for shared functionality
+class AppUtils {
+  // Show error message in a snackbar
+  static void showErrorSnackBar(BuildContext context, String message) {
+    if (!context.mounted) return;
+    
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+  
+  // Handle haptic feedback
+  static Future<void> triggerHapticFeedback() async {
+    if (await Vibration.hasVibrator()) {
+      Vibration.vibrate(duration: 50);
+    }
+  }
+}
 
 // ========== AppSettings 狀態管理 ==========
 class AppSettings extends ChangeNotifier {
@@ -739,6 +761,26 @@ class _WordQuizPageState extends State<WordQuizPage> {
   late FlutterTts flutterTts;
   bool ttsReady = false;
   bool isSpeaking = false;
+  bool _isPressed = false;
+  DateTime? _pressStartTime;
+  
+  // Open Cambridge Dictionary for the current word in WebView
+  Future<void> _openDictionary() async {
+    try {
+      final word = words[currentIndex].english.split(' ').first;
+      await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => DictionaryWebView(word: word),
+        ),
+      );
+      await AppUtils.triggerHapticFeedback();
+    } catch (e) {
+      if (mounted) AppUtils.showErrorSnackBar(context, '發生錯誤: $e');
+    }
+  }
+  
+  // Show error message in a snackbar - moved to be accessible by all methods
 
   @override
   void initState() {
@@ -1087,6 +1129,28 @@ class _WordQuizPageState extends State<WordQuizPage> {
                           showChinese = !showChinese;
                         });
                       },
+                      onLongPressStart: (_) {
+                        setState(() => _isPressed = true);
+                        HapticFeedback.lightImpact();
+                        _pressStartTime = DateTime.now();
+                      },
+                      onLongPressEnd: (_) {
+                        if (_pressStartTime != null) {
+                          final pressDuration = DateTime.now().difference(_pressStartTime!);
+                          setState(() => _isPressed = false);
+                          
+                          if (pressDuration > const Duration(seconds: 1)) {
+                            _openDictionary();
+                          } else {
+                            setState(() => showChinese = !showChinese);
+                          }
+                        } else {
+                          setState(() => _isPressed = false);
+                        }
+                      },
+                      onLongPressCancel: () {
+                        setState(() => _isPressed = false);
+                      },
                       onDoubleTap: () async {
                         final word = words[currentIndex].english;
                         if (favoriteWords.contains(word)) {
@@ -1109,7 +1173,8 @@ class _WordQuizPageState extends State<WordQuizPage> {
                       child: Stack(
                         children: [
                           AnimatedContainer(
-                            duration: const Duration(milliseconds: 200),
+                            duration: const Duration(milliseconds: 150),
+                            transform: Matrix4.identity()..scale(_isPressed ? 0.98 : 1.0),
                             margin: const EdgeInsets.symmetric(
                               horizontal: 32,
                               vertical: 100,
@@ -1802,9 +1867,19 @@ class _AllWordsPageState extends State<AllWordsPage> {
   }
 
   Future<void> _launchURL(String word) async {
-    final Uri url = Uri.parse('https://dictionary.cambridge.org/dictionary/english-chinese-traditional/$word');
-    if (!await launchUrl(url)) {
-      throw Exception('Could not launch $url');
+    try {
+      await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => DictionaryWebView(
+            word: word,
+            isEnglishOnly: false,
+          ),
+        ),
+      );
+      await AppUtils.triggerHapticFeedback();
+    } catch (e) {
+      if (mounted) AppUtils.showErrorSnackBar(context, '發生錯誤: $e');
     }
   }
 
