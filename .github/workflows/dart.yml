@@ -14,8 +14,15 @@ jobs:
         with:
           channel: 'stable'
           architecture: x64
+
       - run: flutter pub get
-      
+
+      - name: Fix Podfile platform version
+        run: |
+          if ! grep -q "^platform :ios" ios/Podfile; then
+            echo "⚙️ Adding platform :ios, '13.0' to Podfile"
+            echo "platform :ios, '13.0'" | cat - ios/Podfile > temp && mv temp ios/Podfile
+          fi
 
       - run: pod repo update
         working-directory: ios
