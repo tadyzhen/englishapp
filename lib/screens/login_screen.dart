@@ -5,6 +5,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'register_screen.dart';
+import 'main_navigation.dart';
 
 class LoginScreen extends StatefulWidget {
   final VoidCallback onLoginSuccess;
@@ -192,11 +193,14 @@ class _LoginScreenState extends State<LoginScreen> {
       await prefs.setString('login_method', 'guest');
       
       if (mounted) {
+        debugPrint('Guest login successful, calling onLoginSuccess callback');
+        
         // Show guest mode message
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('訪客模式啟用'),
             duration: Duration(seconds: 1),
+            backgroundColor: Colors.orange,
           ),
         );
         
@@ -223,6 +227,17 @@ class _LoginScreenState extends State<LoginScreen> {
       appBar: AppBar(
         title: const Text('登入'),
         centerTitle: true,
+        leading: IconButton(
+          icon: const Icon(Icons.home),
+          onPressed: () {
+            // Emergency navigation back to main app
+            Navigator.of(context).pushAndRemoveUntil(
+              MaterialPageRoute(builder: (context) => const MainNavigation()),
+              (route) => false,
+            );
+          },
+          tooltip: '返回主頁',
+        ),
       ),
       body: Form(
         key: _formKey,

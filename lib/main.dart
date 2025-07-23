@@ -2404,34 +2404,36 @@ class _AllWordsPageState extends State<AllWordsPage> {
             )
             .toList();
       });
-
-      // Show dialog if no results found
-      if (_filteredWords.isEmpty && query.isNotEmpty) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          showDialog(
-            context: context,
-            builder: (context) => AlertDialog(
-              title: const Text('找不到單字'),
-              content: Text('找不到 "$query"，是否要在劍橋辭典中搜尋？'),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('取消'),
-                ),
-                TextButton(
-                  onPressed: () {
-                    Navigator.pop(context);
-                    _launchURL(query);
-                  },
-                  child: const Text('前往劍橋辭典'),
-                ),
-              ],
-            ),
-          );
-        });
-      }
     }
     _filterAndSortWords();
+  }
+
+  // New method to handle Enter key press
+  void _onSearchSubmitted(String query) {
+    final trimmedQuery = query.toLowerCase().trim();
+    if (trimmedQuery.isNotEmpty && _filteredWords.isEmpty) {
+      // Only show Cambridge dictionary dialog when Enter is pressed and no results found
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('找不到單字'),
+          content: Text('找不到 "$trimmedQuery"，是否要在劍橋辭典中搜尋？'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('取消'),
+            ),
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context);
+                _launchURL(trimmedQuery);
+              },
+              child: const Text('前往劍橋辭典'),
+            ),
+          ],
+        ),
+      );
+    }
   }
 
   void _filterAndSortWords() {
@@ -2531,11 +2533,13 @@ class _AllWordsPageState extends State<AllWordsPage> {
               controller: _searchController,
               decoration: InputDecoration(
                 labelText: '搜尋單字',
+                hintText: '輸入單字後按 Enter 搜尋',
                 prefixIcon: const Icon(Icons.search),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
                 ),
               ),
+              onSubmitted: _onSearchSubmitted,
             ),
           ),
           Padding(
