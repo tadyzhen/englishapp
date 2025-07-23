@@ -77,9 +77,11 @@ class AccountScreen extends StatelessWidget {
                 // Navigate to login screen and remove all previous routes
                 Navigator.of(context).pushAndRemoveUntil(
                   MaterialPageRoute(builder: (context) => LoginScreen(
-                    onLoginSuccess: () {
-                      // Navigate back to account screen after successful login
-                      Navigator.of(context).pop();
+                    onLoginSuccess: () async {
+                      // After login, pop the login screen to return to the account screen.
+                      if (context.mounted) {
+                        Navigator.of(context).pop();
+                      }
                     },
                   )),
                   (route) => false,

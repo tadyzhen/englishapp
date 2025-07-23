@@ -259,13 +259,10 @@ class _AuthWrapperState extends State<AuthWrapper> {
     }
   }
 
-  void _refreshAuthState() {
-    // Force a rebuild to check current auth state
-    if (mounted) {
-      setState(() {
-        _isLoading = false; // Don't show loading, just refresh
-      });
-    }
+  // Re-check auth state after login/logout actions
+  Future<void> _refreshAuthState() async {
+    // Re-check the auth state from storage and rebuild
+    await _checkAuthState();
   }
 
   @override
@@ -320,9 +317,9 @@ class _AuthWrapperState extends State<AuthWrapper> {
 
         // User is not authenticated - show login screen
         return LoginScreen(
-          onLoginSuccess: () {
+          onLoginSuccess: () async {
             // Refresh the auth state after successful login
-            _refreshAuthState();
+            await _refreshAuthState();
           },
         );
       },
@@ -2583,37 +2580,26 @@ class _AllWordsPageState extends State<AllWordsPage> {
                 // Get the first part before "/" for dictionary lookup
                 final lookupWord = word.english.split('/').first.trim();
                 bool isPressing = false;
-                Timer? longPressTimer;
 
                 return StatefulBuilder(
                   builder: (context, setState) {
                     return GestureDetector(
                       onTapDown: (_) {
                         setState(() => isPressing = true);
-                        // Stronger haptic feedback
-                        HapticFeedback.heavyImpact();
-
-                        // Set timer for dictionary launch (0.5s)
-                        longPressTimer = Timer(
-                          const Duration(milliseconds: 500),
-                          () {
-                            if (mounted) {
-                              _launchURL(lookupWord);
-                            }
-                          },
+                        // Navigate immediately on press down
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) =>
+                                DictionaryWebView(word: lookupWord),
+                          ),
                         );
                       },
                       onTapUp: (_) {
-                        longPressTimer?.cancel();
-                        if (mounted) {
-                          setState(() => isPressing = false);
-                        }
+                        setState(() => isPressing = false);
                       },
                       onTapCancel: () {
-                        longPressTimer?.cancel();
-                        if (mounted) {
-                          setState(() => isPressing = false);
-                        }
+                        setState(() => isPressing = false);
                       },
                       child: AnimatedContainer(
                         duration: const Duration(milliseconds: 50),
@@ -2649,32 +2635,31 @@ class WordCard extends StatefulWidget {
 }
 
 class _WordCardState extends State<WordCard> {
-  double _scale = 1.0;
-  Timer? _holdTimer;
+  bool _isPressed = false;
 
   void _onTapDown(TapDownDetails details) {
-    setState(() => _scale = 0.95);
-    AppUtils.triggerHapticFeedback();
-
-    _holdTimer = Timer(const Duration(milliseconds: 500), () {
-      _navigateToCambridge();
-    });
+    if (mounted) {
+      setState(() => _isPressed = true);
+      AppUtils.triggerHapticFeedback();
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => DictionaryWebView(word: widget.word),
+        ),
+      );
+    }
   }
 
   void _onTapUp(TapUpDetails details) {
-    setState(() => _scale = 1.0);
-    _holdTimer?.cancel();
+    if (mounted) {
+      setState(() => _isPressed = false);
+    }
   }
 
   void _onTapCancel() {
-    setState(() => _scale = 1.0);
-    _holdTimer?.cancel();
-  }
-
-  void _navigateToCambridge() {
-    final url =
-        'https://dictionary.cambridge.org/dictionary/english/\${widget.word}';
-    launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+    if (mounted) {
+      setState(() => _isPressed = false);
+    }
   }
 
   @override
@@ -2683,9 +2668,9 @@ class _WordCardState extends State<WordCard> {
       onTapDown: _onTapDown,
       onTapUp: _onTapUp,
       onTapCancel: _onTapCancel,
-      child: AnimatedScale(
+      child: AnimatedContainer(
         duration: const Duration(milliseconds: 100),
-        scale: _scale,
+        transform: _isPressed ? (Matrix4.identity()..scale(0.95)) : Matrix4.identity(),
         child: Card(
           child: Padding(
             padding: const EdgeInsets.all(16.0),

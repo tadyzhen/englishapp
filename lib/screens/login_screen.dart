@@ -8,7 +8,7 @@ import 'register_screen.dart';
 import 'main_navigation.dart';
 
 class LoginScreen extends StatefulWidget {
-  final VoidCallback onLoginSuccess;
+  final Future<void> Function() onLoginSuccess;
 
   const LoginScreen({Key? key, required this.onLoginSuccess}) : super(key: key);
 
@@ -59,7 +59,7 @@ class _LoginScreenState extends State<LoginScreen> {
         );
         
         // Navigate immediately
-        widget.onLoginSuccess();
+        await widget.onLoginSuccess();
       }
     } on FirebaseAuthException catch (e) {
       setState(() {
@@ -158,7 +158,7 @@ class _LoginScreenState extends State<LoginScreen> {
           
           debugPrint('Calling onLoginSuccess callback');
           // Navigate immediately after showing message
-          widget.onLoginSuccess();
+          await widget.onLoginSuccess();
         }
       }
     } on FirebaseAuthException catch (e) {
@@ -205,7 +205,7 @@ class _LoginScreenState extends State<LoginScreen> {
         );
         
         // Navigate immediately
-        widget.onLoginSuccess();
+        await widget.onLoginSuccess();
       }
     } catch (e) {
       debugPrint('Guest login error: $e');
