@@ -7,22 +7,24 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:flutter/services.dart';
 import 'package:vibration/vibration.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'firebase_options.dart';
 import 'dictionary_webview.dart';
+import 'screens/login_screen.dart';
+import 'screens/main_navigation.dart';
 
 // Utility class for shared functionality
 class AppUtils {
   // Show error message in a snackbar
   static void showErrorSnackBar(BuildContext context, String message) {
     if (!context.mounted) return;
-    
+
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        duration: const Duration(seconds: 2),
-      ),
+      SnackBar(content: Text(message), duration: const Duration(seconds: 2)),
     );
   }
-  
+
   // Handle haptic feedback
   static Future<void> triggerHapticFeedback() async {
     if (await Vibration.hasVibrator()) {
@@ -116,20 +118,34 @@ class SettingsProvider extends InheritedNotifier<AppSettings> {
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  
+  // Initialize Firebase
+  try {
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+    print('Firebase initialized successfully');
+  } catch (e) {
+    print('Error initializing Firebase: $e');
+  }
+  
   final settings = await AppSettings.load();
   runApp(SettingsProvider(notifier: settings, child: const EnglishApp()));
 }
 
 class EnglishApp extends StatelessWidget {
   const EnglishApp({super.key});
+
   @override
   Widget build(BuildContext context) {
     final settings = SettingsProvider.of(context);
+    
     return AnimatedBuilder(
       animation: settings,
       builder: (context, _) {
         return MaterialApp(
           debugShowCheckedModeBanner: false,
+          title: '英文學習助手',
           theme: ThemeData(
             fontFamily: 'SF Pro Display',
             scaffoldBackgroundColor: Colors.white,
@@ -144,33 +160,115 @@ class EnglishApp extends StatelessWidget {
               iconTheme: IconThemeData(color: Color(0xFF222222)),
               titleTextStyle: TextStyle(
                 color: Color(0xFF222222),
-                fontSize: 22,
+                fontSize: 18,
                 fontWeight: FontWeight.w600,
-                fontFamily: 'SF Pro Display',
               ),
             ),
+            primarySwatch: Colors.blue,
+            visualDensity: VisualDensity.adaptivePlatformDensity,
           ),
           darkTheme: ThemeData.dark().copyWith(
-            colorScheme: ColorScheme.fromSwatch().copyWith(
-              primary: const Color(0xFF007AFF),
-              secondary: const Color(0xFF007AFF),
-            ),
             appBarTheme: const AppBarTheme(
-              backgroundColor: Color(0xFF181818),
+              backgroundColor: Color(0xFF121212),
               elevation: 0,
               centerTitle: true,
               iconTheme: IconThemeData(color: Colors.white),
               titleTextStyle: TextStyle(
                 color: Colors.white,
-                fontSize: 22,
+                fontSize: 18,
                 fontWeight: FontWeight.w600,
-                fontFamily: 'SF Pro Display',
               ),
             ),
+            primaryColor: const Color(0xFF1E88E5),
+            visualDensity: VisualDensity.adaptivePlatformDensity,
           ),
           themeMode: settings.themeMode,
-          home: const LevelSelectPage(),
+          home: const AuthWrapper(),
         );
+      },
+    );
+  }
+}
+
+class AuthWrapper extends StatefulWidget {
+  const AuthWrapper({super.key});
+
+  @override
+  State<AuthWrapper> createState() => _AuthWrapperState();
+}
+
+class _AuthWrapperState extends State<AuthWrapper> {
+  bool _isLoading = true;
+  bool _isGuest = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkAuthState();
+  }
+
+  Future<void> _checkAuthState() async {
+    final prefs = await SharedPreferences.getInstance();
+    final loginMethod = prefs.getString('login_method');
+    
+    if (mounted) {
+      setState(() {
+        _isGuest = loginMethod == 'guest';
+        _isLoading = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_isLoading) {
+      return const Scaffold(
+        body: Center(
+          child: CircularProgressIndicator(),
+        ),
+      );
+    }
+
+    // For guest users, directly show main navigation
+    if (_isGuest) {
+      return const MainNavigation();
+    }
+
+    // For authenticated users, check auth state
+    return StreamBuilder<User?>(
+      stream: FirebaseAuth.instance.authStateChanges(),
+      builder: (context, snapshot) {
+        // Show loading indicator while checking auth state
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Scaffold(
+            body: Center(
+              child: CircularProgressIndicator(),
+            ),
+          );
+        }
+
+        // User is not logged in
+        if (snapshot.data == null) {
+          return LoginScreen(
+            onLoginSuccess: () {
+              // Update state to show main navigation
+              if (mounted) {
+                setState(() => _isGuest = false);
+              }
+            },
+          );
+        }
+
+        // User is logged in - ensure guest mode is false
+        if (mounted) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) {
+              setState(() => _isGuest = false);
+            }
+          });
+        }
+        
+        return const MainNavigation();
       },
     );
   }
@@ -260,13 +358,13 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
   }
 
   void showSettingsDialog() {
-    showDialog(
-      context: context,
-      builder: (ctx) => const SettingsDialog(),
-    );
+    showDialog(context: context, builder: (ctx) => const SettingsDialog());
   }
 
-  Future<void> _showLevelOptionsDialog(String level, {required bool hasProgress}) async {
+  Future<void> _showLevelOptionsDialog(
+    String level, {
+    required bool hasProgress,
+  }) async {
     final words = await _loadWordsForLevel(level);
     if (!mounted) return;
 
@@ -311,16 +409,16 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
       String data = await rootBundle.loadString('assets/words.json');
       List<dynamic> jsonResult = json.decode(data);
       List<Word> words = jsonResult.map((item) => Word.fromJson(item)).toList();
-      
+
       if (level == '全部') {
         return words.length;
       }
       return words.where((word) => word.level == level).length;
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('載入單字時發生錯誤: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('載入單字時發生錯誤: $e')));
       }
       return 10; // Default to 10 questions if there's an error
     }
@@ -329,14 +427,15 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
   Future<void> _launchURL(String word) async {
     // Always use the part before "/" for dictionary lookup
     final cleanWord = word.split('/').first.trim();
-    final url = 'https://dictionary.cambridge.org/zht/%E8%A9%9E%E5%85%B8/%E8%8B%B1%E8%AA%9E-%E6%BC%A2%E8%AA%9E-%E7%B9%81%E9%AB%94/$cleanWord';
+    final url =
+        'https://dictionary.cambridge.org/zht/%E8%A9%9E%E5%85%B8/%E8%8B%B1%E8%AA%9E-%E6%BC%A2%E8%AA%9E-%E7%B9%81%E9%AB%94/$cleanWord';
     final uri = Uri.parse(url);
     if (await canLaunchUrl(uri)) {
       await launchUrl(uri, mode: LaunchMode.externalApplication);
     } else if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('無法開啟字典: $cleanWord')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('無法開啟字典: $cleanWord')));
     }
   }
 
@@ -346,7 +445,9 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
     int questionCount = 10;
     int maxQuestions = 10;
     String quizType = 'ch2en';
-    final TextEditingController countController = TextEditingController(text: '10');
+    final TextEditingController countController = TextEditingController(
+      text: '10',
+    );
 
     await showDialog(
       context: context,
@@ -360,7 +461,10 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   // 測驗等級選擇
-                  const Text('1. 選擇測驗等級', style: TextStyle(fontWeight: FontWeight.bold)),
+                  const Text(
+                    '1. 選擇測驗等級',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
                   const SizedBox(height: 8),
                   Wrap(
                     spacing: 8.0,
@@ -385,9 +489,12 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
                     }).toList(),
                   ),
                   const SizedBox(height: 16),
-                  
+
                   // 題數選擇
-                  const Text('2. 選擇測驗題數', style: TextStyle(fontWeight: FontWeight.bold)),
+                  const Text(
+                    '2. 選擇測驗題數',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
                   const SizedBox(height: 8),
                   Row(
                     children: [
@@ -398,7 +505,8 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
                           textInputAction: TextInputAction.done,
                           onSubmitted: (_) {
                             // Handle Enter key press
-                            final count = int.tryParse(countController.text) ?? 0;
+                            final count =
+                                int.tryParse(countController.text) ?? 0;
                             if (count > 0 && count <= maxQuestions) {
                               questionCount = count;
                               Navigator.of(context).pop({
@@ -412,7 +520,10 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
                             labelText: '題數 (1-$maxQuestions)',
                             border: const OutlineInputBorder(),
                             hintText: '輸入後按 Enter 確認',
-                            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 8,
+                            ),
                           ),
                           onChanged: (value) {
                             final count = int.tryParse(value) ?? 0;
@@ -439,9 +550,12 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
                     },
                   ),
                   const SizedBox(height: 16),
-                  
+
                   // 測驗模式選擇
-                  const Text('3. 選擇測驗模式', style: TextStyle(fontWeight: FontWeight.bold)),
+                  const Text(
+                    '3. 選擇測驗模式',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
                   const SizedBox(height: 8),
                   Column(
                     children: [
@@ -494,21 +608,18 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
         final level = result['level'] as String;
         final count = result['count'] as int;
         final type = result['type'] as String;
-        
+
         // 檢查題數是否有效
         final wordCount = await _getWordCountForLevel(level);
         final finalCount = count > wordCount ? wordCount : count;
-        
+
         if (!mounted) return;
-        
+
         Navigator.push(
           context,
           MaterialPageRoute(
-            builder: (context) => QuizPage(
-              type: type,
-              level: level,
-              questionCount: finalCount,
-            ),
+            builder: (context) =>
+                QuizPage(type: type, level: level, questionCount: finalCount),
           ),
         );
       }
@@ -604,7 +715,8 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
                   return GestureDetector(
                     onTap: () async {
                       final prefs = await SharedPreferences.getInstance();
-                      final knownWords = prefs.getStringList('known_$level') ?? [];
+                      final knownWords =
+                          prefs.getStringList('known_$level') ?? [];
                       final hasProgress = knownWords.isNotEmpty;
                       _showLevelOptionsDialog(level, hasProgress: hasProgress);
                     },
@@ -702,8 +814,12 @@ class _SettingsDialogState extends State<SettingsDialog> {
 
       List<dynamic> allVoices = await flutterTts.getVoices;
       List<Map<String, String>> availableVoices = allVoices
-          .map((v) =>
-              {"name": v['name'] as String, "locale": v['locale'] as String})
+          .map(
+            (v) => {
+              "name": v['name'] as String,
+              "locale": v['locale'] as String,
+            },
+          )
           .toList();
 
       List<Map<String, String>> tempDisplayVoices = [];
@@ -731,7 +847,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
             .map((v) => {...v, 'displayName': v['name']!})
             .toList();
       }
-      
+
       if (!mounted) return;
 
       setState(() {
@@ -762,13 +878,8 @@ class _SettingsDialogState extends State<SettingsDialog> {
   Widget build(BuildContext context) {
     final settings = SettingsProvider.of(context);
     return AlertDialog(
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(20),
-      ),
-      title: const Text(
-        '設定',
-        style: TextStyle(fontWeight: FontWeight.bold),
-      ),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      title: const Text('設定', style: TextStyle(fontWeight: FontWeight.bold)),
       content: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -856,8 +967,9 @@ class _SettingsDialogState extends State<SettingsDialog> {
                       }).toList(),
                       onChanged: (name) {
                         if (name != null) {
-                          final selectedVoiceMap = _displayVoices
-                              .firstWhere((v) => v['name'] == name);
+                          final selectedVoiceMap = _displayVoices.firstWhere(
+                            (v) => v['name'] == name,
+                          );
                           settings.setTtsVoice({
                             'name': selectedVoiceMap['name']!,
                             'locale': selectedVoiceMap['locale']!,
@@ -877,10 +989,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text(
-            '關閉',
-            style: TextStyle(color: Color(0xFF007AFF)),
-          ),
+          child: const Text('關閉', style: TextStyle(color: Color(0xFF007AFF))),
         ),
       ],
     );
@@ -946,23 +1055,21 @@ class _WordQuizPageState extends State<WordQuizPage> {
   bool isSpeaking = false;
   bool _isPressed = false;
   DateTime? _pressStartTime;
-  
+
   // Open Cambridge Dictionary for the current word in WebView
   Future<void> _openDictionary() async {
     try {
       final word = words[currentIndex].english.split(' ').first;
       await Navigator.push(
         context,
-        MaterialPageRoute(
-          builder: (context) => DictionaryWebView(word: word),
-        ),
+        MaterialPageRoute(builder: (context) => DictionaryWebView(word: word)),
       );
       await AppUtils.triggerHapticFeedback();
     } catch (e) {
       if (mounted) AppUtils.showErrorSnackBar(context, '發生錯誤: $e');
     }
   }
-  
+
   // Show error message in a snackbar - moved to be accessible by all methods
 
   @override
@@ -1039,7 +1146,7 @@ class _WordQuizPageState extends State<WordQuizPage> {
     List<Word> wordList = List<Word>.from(temp[level] ?? []);
     Set<String> known = prefs.getStringList('known_$level')?.toSet() ?? {};
     Set<String> favs = prefs.getStringList('favorite_words')?.toSet() ?? {};
-    
+
     int firstUnfamiliar = -1;
     if (widget.initialWordIndex != null) {
       firstUnfamiliar = widget.initialWordIndex!;
@@ -1096,7 +1203,7 @@ class _WordQuizPageState extends State<WordQuizPage> {
     final prefs = await SharedPreferences.getInstance();
     String key = 'known_${selectedLevel ?? ''}';
     String wordKey = words[currentIndex].english;
-    
+
     // Update known words set based on swipe direction
     if (known) {
       knownWords.add(wordKey);
@@ -1324,9 +1431,11 @@ class _WordQuizPageState extends State<WordQuizPage> {
                       },
                       onLongPressEnd: (_) {
                         if (_pressStartTime != null) {
-                          final pressDuration = DateTime.now().difference(_pressStartTime!);
+                          final pressDuration = DateTime.now().difference(
+                            _pressStartTime!,
+                          );
                           setState(() => _isPressed = false);
-                          
+
                           if (pressDuration > const Duration(seconds: 1)) {
                             _openDictionary();
                           } else {
@@ -1362,13 +1471,16 @@ class _WordQuizPageState extends State<WordQuizPage> {
                         children: [
                           AnimatedContainer(
                             duration: const Duration(milliseconds: 150),
-                            transform: Matrix4.identity()..scale(_isPressed ? 0.98 : 1.0),
+                            transform: Matrix4.identity()
+                              ..scale(_isPressed ? 0.98 : 1.0),
                             margin: const EdgeInsets.symmetric(
                               horizontal: 32,
                               vertical: 100,
                             ),
                             decoration: BoxDecoration(
-                              color: Theme.of(context).brightness == Brightness.dark
+                              color:
+                                  Theme.of(context).brightness ==
+                                      Brightness.dark
                                   ? const Color(0xFF232323)
                                   : Colors.white,
                               borderRadius: BorderRadius.circular(cardRadius),
@@ -1381,7 +1493,8 @@ class _WordQuizPageState extends State<WordQuizPage> {
                               ],
                               border: Border.all(
                                 color:
-                                    Theme.of(context).brightness == Brightness.dark
+                                    Theme.of(context).brightness ==
+                                        Brightness.dark
                                     ? const Color(0xFF444444)
                                     : const Color(0xFFE5E5EA),
                                 width: 1.2,
@@ -1468,7 +1581,9 @@ class _WordQuizPageState extends State<WordQuizPage> {
                             left: 40,
                             child: IconButton(
                               icon: Icon(
-                                favoriteWords.contains(words[currentIndex].english)
+                                favoriteWords.contains(
+                                      words[currentIndex].english,
+                                    )
                                     ? Icons.star
                                     : Icons.star_border,
                                 color: Colors.amber,
@@ -1478,15 +1593,16 @@ class _WordQuizPageState extends State<WordQuizPage> {
                                 final word = words[currentIndex].english;
                                 if (favoriteWords.contains(word)) {
                                   favoriteWords.remove(word);
-                                  final prefs = await SharedPreferences.getInstance();
+                                  final prefs =
+                                      await SharedPreferences.getInstance();
                                   await prefs.setStringList(
                                     'favorite_words',
                                     favoriteWords.toList(),
                                   );
                                   if (mounted) {
-                                    ScaffoldMessenger.of(
-                                      context,
-                                    ).showSnackBar(SnackBar(content: Text('已移除收藏')));
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(content: Text('已移除收藏')),
+                                    );
                                   }
                                 } else {
                                   await addToFavorite(word);
@@ -1524,9 +1640,7 @@ class WordListPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text('等級 $level - 單字列表'),
-      ),
+      appBar: AppBar(title: Text('等級 $level - 單字列表')),
       body: ListView.builder(
         itemCount: words.length,
         itemBuilder: (context, index) {
@@ -1622,8 +1736,8 @@ class QuizPage extends StatefulWidget {
   final String level;
   final int questionCount;
   const QuizPage({
-    super.key, 
-    required this.type, 
+    super.key,
+    required this.type,
     required this.level,
     this.questionCount = 10, // Default to 10 if not specified
   });
@@ -1649,7 +1763,7 @@ class _QuizPageState extends State<QuizPage> {
     super.initState();
     _resetQuiz();
   }
-  
+
   Future<void> _resetQuiz() async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -1693,12 +1807,12 @@ class _QuizPageState extends State<QuizPage> {
     } else {
       filteredWords = allWords.where((w) => w.level == widget.level).toList();
     }
-    
+
     // Only shuffle and take new questions if we're not restoring state
     if (quizWords.isEmpty) {
       filteredWords.shuffle();
-      final count = widget.questionCount > filteredWords.length 
-          ? filteredWords.length 
+      final count = widget.questionCount > filteredWords.length
+          ? filteredWords.length
           : widget.questionCount;
       quizWords = filteredWords.take(count).toList();
     }
@@ -1716,65 +1830,76 @@ class _QuizPageState extends State<QuizPage> {
       options.shuffle();
       return options;
     }).toList();
-    
+
     // Initialize userAnswers if not already done
     if (userAnswers.length != quizWords.length) {
       userAnswers = List.filled(quizWords.length, -1);
     }
-    
+
     if (mounted) {
       setState(() {
         current = 0;
-        score = userAnswers.where((ans) => ans != -1).length; // Count already answered questions
+        score = userAnswers
+            .where((ans) => ans != -1)
+            .length; // Count already answered questions
       });
     }
   }
 
   void _handleAnswer(int selectedIndex) {
     if (_isProcessing || _showAnswer) return;
-    
+
     setState(() {
       _selectedIndex = selectedIndex;
       _showAnswer = true;
-      final correctIdx = optionsList[current].indexWhere((w) => w.english == quizWords[current].english);
+      final correctIdx = optionsList[current].indexWhere(
+        (w) => w.english == quizWords[current].english,
+      );
       _isAnswerCorrect = selectedIndex == correctIdx;
-      
+
       // Update the answer in our tracking
-      if (userAnswers[current] == -1) { // Only update if not already answered
+      if (userAnswers[current] == -1) {
+        // Only update if not already answered
         if (_isAnswerCorrect) {
           score++;
         }
         userAnswers[current] = selectedIndex;
       }
-      
+
       if (_isAnswerCorrect) {
         _showAllTranslations = false;
         // Auto-advance to next question after a short delay if answer is correct
         Future.delayed(const Duration(milliseconds: 500), _nextQuestion);
       } else {
-        _showAllTranslations = true; // Show all translations for incorrect answers
+        _showAllTranslations =
+            true; // Show all translations for incorrect answers
       }
     });
   }
-  
+
   void _previousQuestion() {
     if (current > 0) {
       setState(() {
         current--;
         // When going back, show the answer state if it was already answered
         _showAnswer = userAnswers[current] != -1;
-        _selectedIndex = userAnswers[current] != -1 ? userAnswers[current] : null;
+        _selectedIndex = userAnswers[current] != -1
+            ? userAnswers[current]
+            : null;
         _isProcessing = false;
         // Show translations if this question was answered incorrectly
-        _showAllTranslations = _showAnswer && _selectedIndex != null && 
-            optionsList[current][_selectedIndex!].english != quizWords[current].english;
+        _showAllTranslations =
+            _showAnswer &&
+            _selectedIndex != null &&
+            optionsList[current][_selectedIndex!].english !=
+                quizWords[current].english;
       });
     }
   }
 
   void _nextQuestion() {
     if (!mounted) return;
-    
+
     if (current < quizWords.length - 1) {
       setState(() {
         current++;
@@ -1843,7 +1968,10 @@ class _QuizPageState extends State<QuizPage> {
                 children: [
                   Text(
                     widget.type == 'ch2en' ? word.chinese : word.english,
-                    style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                    style: const TextStyle(
+                      fontSize: 24,
+                      fontWeight: FontWeight.bold,
+                    ),
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 32),
@@ -1859,8 +1987,9 @@ class _QuizPageState extends State<QuizPage> {
                         final opt = options[i];
                         final isCorrect = i == correctIdx;
                         final isSelected = _selectedIndex == i;
-                        final showAnswer = _showAnswer && (isCorrect || isSelected);
-                        
+                        final showAnswer =
+                            _showAnswer && (isCorrect || isSelected);
+
                         Color? cardColor = Theme.of(context).cardColor;
                         Color? borderColor = Colors.grey[300];
                         BoxShadow? boxShadow;
@@ -1875,7 +2004,9 @@ class _QuizPageState extends State<QuizPage> {
                           }
                         } else if (isSelected) {
                           boxShadow = BoxShadow(
-                            color: Theme.of(context).primaryColor.withOpacity(0.3),
+                            color: Theme.of(
+                              context,
+                            ).primaryColor.withOpacity(0.3),
                             blurRadius: 8,
                             spreadRadius: 1,
                           );
@@ -1901,31 +2032,46 @@ class _QuizPageState extends State<QuizPage> {
                                   mainAxisAlignment: MainAxisAlignment.center,
                                   children: [
                                     Text(
-                                      widget.type == 'ch2en' ? opt.english : opt.chinese,
+                                      widget.type == 'ch2en'
+                                          ? opt.english
+                                          : opt.chinese,
                                       style: TextStyle(
                                         fontSize: 18,
-                                        color: isSelected && !isCorrect && _showAnswer
+                                        color:
+                                            isSelected &&
+                                                !isCorrect &&
+                                                _showAnswer
                                             ? Colors.red
-                                            : (isCorrect && _showAnswer ? Colors.green : null),
+                                            : (isCorrect && _showAnswer
+                                                  ? Colors.green
+                                                  : null),
                                         fontWeight: FontWeight.bold,
                                       ),
                                       textAlign: TextAlign.center,
                                     ),
-                                    if (_showAllTranslations || _showAnswer || userAnswers[current] != -1)
+                                    if (_showAllTranslations ||
+                                        _showAnswer ||
+                                        userAnswers[current] != -1)
                                       Padding(
-                                        padding: const EdgeInsets.only(top: 4.0),
+                                        padding: const EdgeInsets.only(
+                                          top: 4.0,
+                                        ),
                                         child: Text(
-                                          widget.type == 'ch2en' ? opt.chinese : opt.english,
+                                          widget.type == 'ch2en'
+                                              ? opt.chinese
+                                              : opt.english,
                                           style: TextStyle(
                                             fontSize: 14,
-                                            color: isCorrect && _showAnswer 
+                                            color: isCorrect && _showAnswer
                                                 ? Colors.green[700]
-                                                : (isSelected && !isCorrect && _showAnswer
-                                                    ? Colors.red[700]
-                                                    : Colors.grey[600]),
+                                                : (isSelected &&
+                                                          !isCorrect &&
+                                                          _showAnswer
+                                                      ? Colors.red[700]
+                                                      : Colors.grey[600]),
                                             fontStyle: FontStyle.italic,
-                                            fontWeight: isCorrect && _showAnswer 
-                                                ? FontWeight.bold 
+                                            fontWeight: isCorrect && _showAnswer
+                                                ? FontWeight.bold
                                                 : null,
                                           ),
                                           textAlign: TextAlign.center,
@@ -1951,16 +2097,24 @@ class _QuizPageState extends State<QuizPage> {
                           icon: const Icon(Icons.arrow_back),
                           label: const Text('上一題'),
                           style: ElevatedButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 20,
+                              vertical: 10,
+                            ),
                             minimumSize: const Size(120, 48),
                           ),
                         ),
                         ElevatedButton.icon(
                           onPressed: _nextQuestion,
                           icon: const Icon(Icons.arrow_forward),
-                          label: Text(current < quizWords.length - 1 ? '下一題' : '查看結果'),
+                          label: Text(
+                            current < quizWords.length - 1 ? '下一題' : '查看結果',
+                          ),
                           style: ElevatedButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 20,
+                              vertical: 10,
+                            ),
                             minimumSize: const Size(120, 48),
                           ),
                         ),
@@ -1995,8 +2149,11 @@ class QuizResultsPage extends StatelessWidget {
   Widget build(BuildContext context) {
     int score = 0;
     for (int i = 0; i < quizWords.length; i++) {
-      if (userAnswers[i] >= 0) { // Only count if answered
-        final correctIdx = optionsList[i].indexWhere((w) => w.english == quizWords[i].english);
+      if (userAnswers[i] >= 0) {
+        // Only count if answered
+        final correctIdx = optionsList[i].indexWhere(
+          (w) => w.english == quizWords[i].english,
+        );
         if (userAnswers[i] == correctIdx) {
           score++;
         }
@@ -2009,8 +2166,9 @@ class QuizResultsPage extends StatelessWidget {
         actions: [
           IconButton(
             icon: const Icon(Icons.home),
-            onPressed: () => Navigator.of(context).popUntil((route) => route.isFirst),
-          )
+            onPressed: () =>
+                Navigator.of(context).popUntil((route) => route.isFirst),
+          ),
         ],
       ),
       body: ListView.builder(
@@ -2019,10 +2177,12 @@ class QuizResultsPage extends StatelessWidget {
           final word = quizWords[index];
           final options = optionsList[index];
           final userAnswer = userAnswers[index];
-          final correctIdx = options.indexWhere((w) => w.english == word.english);
+          final correctIdx = options.indexWhere(
+            (w) => w.english == word.english,
+          );
           final isCorrect = userAnswer == correctIdx;
           final userAnswered = userAnswer >= 0;
-          
+
           return Card(
             margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             child: Padding(
@@ -2039,7 +2199,7 @@ class QuizResultsPage extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 12),
-                  
+
                   // User's answer
                   if (userAnswered) ...[
                     Row(
@@ -2062,23 +2222,33 @@ class QuizResultsPage extends StatelessWidget {
                   ] else ...[
                     const Text(
                       '未回答',
-                      style: TextStyle(color: Colors.grey, fontStyle: FontStyle.italic),
+                      style: TextStyle(
+                        color: Colors.grey,
+                        fontStyle: FontStyle.italic,
+                      ),
                     ),
                     const SizedBox(height: 4),
                   ],
-                  
+
                   // Correct answer
                   Row(
                     children: [
-                      const Icon(Icons.check_circle, color: Colors.green, size: 20),
+                      const Icon(
+                        Icons.check_circle,
+                        color: Colors.green,
+                        size: 20,
+                      ),
                       const SizedBox(width: 8),
                       Text(
                         '正確答案: ${options[correctIdx].chinese}',
-                        style: const TextStyle(color: Colors.green, fontWeight: FontWeight.w500),
+                        style: const TextStyle(
+                          color: Colors.green,
+                          fontWeight: FontWeight.w500,
+                        ),
                       ),
                     ],
                   ),
-                  
+
                   // Options summary
                   const SizedBox(height: 8),
                   const Divider(),
@@ -2090,27 +2260,33 @@ class QuizResultsPage extends StatelessWidget {
                       final opt = entry.value;
                       final isCorrectOption = idx == correctIdx;
                       final isUserChoice = idx == userAnswer;
-                      
+
                       Color bgColor = Colors.grey[200]!;
                       if (isCorrectOption) {
                         bgColor = Colors.green[100]!;
                       } else if (isUserChoice && !isCorrect) {
                         bgColor = Colors.red[100]!;
                       }
-                      
+
                       return Chip(
                         label: Text(
                           '${String.fromCharCode(65 + idx)}. ${quizType == 'ch2en' ? opt.english : opt.chinese}',
                           style: TextStyle(
-                            color: isCorrectOption ? Colors.green[800] : 
-                                   (isUserChoice ? Colors.red[800] : null),
-                            fontWeight: isCorrectOption || isUserChoice ? FontWeight.bold : null,
+                            color: isCorrectOption
+                                ? Colors.green[800]
+                                : (isUserChoice ? Colors.red[800] : null),
+                            fontWeight: isCorrectOption || isUserChoice
+                                ? FontWeight.bold
+                                : null,
                           ),
                         ),
                         backgroundColor: bgColor,
                         side: BorderSide(
-                          color: isCorrectOption ? Colors.green[300]! : 
-                                (isUserChoice ? Colors.red[300]! : Colors.grey[300]!),
+                          color: isCorrectOption
+                              ? Colors.green[300]!
+                              : (isUserChoice
+                                    ? Colors.red[300]!
+                                    : Colors.grey[300]!),
                         ),
                       );
                     }).toList(),
@@ -2124,7 +2300,6 @@ class QuizResultsPage extends StatelessWidget {
     );
   }
 }
-
 
 enum SortOrder { az, level }
 
@@ -2166,12 +2341,14 @@ class _AllWordsPageState extends State<AllWordsPage> {
     } else {
       setState(() {
         _filteredWords = _allWords
-            .where((word) =>
-                word.english.toLowerCase().contains(query) ||
-                word.chinese.contains(query))
+            .where(
+              (word) =>
+                  word.english.toLowerCase().contains(query) ||
+                  word.chinese.contains(query),
+            )
             .toList();
       });
-      
+
       // Show dialog if no results found
       if (_filteredWords.isEmpty && query.isNotEmpty) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -2210,24 +2387,24 @@ class _AllWordsPageState extends State<AllWordsPage> {
       tempWords = tempWords
           .where((word) => word.english.toLowerCase().contains(query))
           .toList();
-      
+
       // For search results, sort by relevance (exact match first, then starts with, then contains)
       tempWords.sort((a, b) {
         String aLower = a.english.toLowerCase();
         String bLower = b.english.toLowerCase();
-        
+
         // Exact match gets highest priority
         bool aExact = aLower == query;
         bool bExact = bLower == query;
         if (aExact && !bExact) return -1;
         if (!aExact && bExact) return 1;
-        
+
         // Words starting with query get second priority
         bool aStarts = aLower.startsWith(query);
         bool bStarts = bLower.startsWith(query);
         if (aStarts && !bStarts) return -1;
         if (!aStarts && bStarts) return 1;
-        
+
         // For words with same relevance, sort alphabetically
         return aLower.compareTo(bLower);
       });
@@ -2236,7 +2413,9 @@ class _AllWordsPageState extends State<AllWordsPage> {
       if (_sortOrder == SortOrder.az) {
         tempWords.sort((a, b) {
           // Primary sort: first letter of English word
-          int firstLetterComp = a.english[0].toLowerCase().compareTo(b.english[0].toLowerCase());
+          int firstLetterComp = a.english[0].toLowerCase().compareTo(
+            b.english[0].toLowerCase(),
+          );
           if (firstLetterComp != 0) return firstLetterComp;
 
           // Secondary sort: word length (shorter words first)
@@ -2268,10 +2447,8 @@ class _AllWordsPageState extends State<AllWordsPage> {
       await Navigator.push(
         context,
         MaterialPageRoute(
-          builder: (context) => DictionaryWebView(
-            word: word,
-            isEnglishOnly: false,
-          ),
+          builder: (context) =>
+              DictionaryWebView(word: word, isEnglishOnly: false),
         ),
       );
       await AppUtils.triggerHapticFeedback();
@@ -2289,9 +2466,7 @@ class _AllWordsPageState extends State<AllWordsPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('所有單字'),
-      ),
+      appBar: AppBar(title: const Text('所有單字')),
       body: Column(
         children: [
           Padding(
@@ -2349,7 +2524,7 @@ class _AllWordsPageState extends State<AllWordsPage> {
                 final lookupWord = word.english.split('/').first.trim();
                 bool isPressing = false;
                 Timer? longPressTimer;
-                
+
                 return StatefulBuilder(
                   builder: (context, setState) {
                     return GestureDetector(
@@ -2357,13 +2532,16 @@ class _AllWordsPageState extends State<AllWordsPage> {
                         setState(() => isPressing = true);
                         // Stronger haptic feedback
                         HapticFeedback.heavyImpact();
-                        
+
                         // Set timer for dictionary launch (0.5s)
-                        longPressTimer = Timer(const Duration(milliseconds: 500), () {
-                          if (mounted) {
-                            _launchURL(lookupWord);
-                          }
-                        });
+                        longPressTimer = Timer(
+                          const Duration(milliseconds: 500),
+                          () {
+                            if (mounted) {
+                              _launchURL(lookupWord);
+                            }
+                          },
+                        );
                       },
                       onTapUp: (_) {
                         longPressTimer?.cancel();
@@ -2383,7 +2561,11 @@ class _AllWordsPageState extends State<AllWordsPage> {
                         child: ListTile(
                           title: Text(word.english),
                           subtitle: Text('等級 ${word.level} - ${word.chinese}'),
-                          trailing: const Icon(Icons.launch, size: 16, color: Colors.blue),
+                          trailing: const Icon(
+                            Icons.launch,
+                            size: 16,
+                            color: Colors.blue,
+                          ),
                         ),
                       ),
                     );
@@ -2397,7 +2579,6 @@ class _AllWordsPageState extends State<AllWordsPage> {
     );
   }
 }
-
 
 class WordCard extends StatefulWidget {
   final String word;
@@ -2431,7 +2612,8 @@ class _WordCardState extends State<WordCard> {
   }
 
   void _navigateToCambridge() {
-    final url = 'https://dictionary.cambridge.org/dictionary/english/\${widget.word}';
+    final url =
+        'https://dictionary.cambridge.org/dictionary/english/\${widget.word}';
     launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
   }
 
