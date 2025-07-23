@@ -199,7 +199,7 @@ class AuthWrapper extends StatefulWidget {
 
 class _AuthWrapperState extends State<AuthWrapper> {
   bool _isLoading = true;
-  bool _isGuest = false;
+  String? _loginMethod;
 
   @override
   void initState() {
@@ -208,15 +208,32 @@ class _AuthWrapperState extends State<AuthWrapper> {
   }
 
   Future<void> _checkAuthState() async {
-    final prefs = await SharedPreferences.getInstance();
-    final loginMethod = prefs.getString('login_method');
-    
-    if (mounted) {
-      setState(() {
-        _isGuest = loginMethod == 'guest';
-        _isLoading = false;
-      });
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final loginMethod = prefs.getString('login_method');
+      
+      if (mounted) {
+        setState(() {
+          _loginMethod = loginMethod;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error checking auth state: $e');
+      if (mounted) {
+        setState(() {
+          _loginMethod = null;
+          _isLoading = false;
+        });
+      }
     }
+  }
+
+  void _refreshAuthState() {
+    setState(() {
+      _isLoading = true;
+    });
+    _checkAuthState();
   }
 
   @override
@@ -229,16 +246,16 @@ class _AuthWrapperState extends State<AuthWrapper> {
       );
     }
 
-    // For guest users, directly show main navigation
-    if (_isGuest) {
+    // Handle guest mode
+    if (_loginMethod == 'guest') {
       return const MainNavigation();
     }
 
-    // For authenticated users, check auth state
+    // Handle authenticated users
     return StreamBuilder<User?>(
       stream: FirebaseAuth.instance.authStateChanges(),
       builder: (context, snapshot) {
-        // Show loading indicator while checking auth state
+        // Show loading while checking Firebase auth
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Scaffold(
             body: Center(
@@ -247,28 +264,18 @@ class _AuthWrapperState extends State<AuthWrapper> {
           );
         }
 
-        // User is not logged in
-        if (snapshot.data == null) {
-          return LoginScreen(
-            onLoginSuccess: () {
-              // Update state to show main navigation
-              if (mounted) {
-                setState(() => _isGuest = false);
-              }
-            },
-          );
+        // User is authenticated
+        if (snapshot.hasData && snapshot.data != null) {
+          return const MainNavigation();
         }
 
-        // User is logged in - ensure guest mode is false
-        if (mounted) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) {
-              setState(() => _isGuest = false);
-            }
-          });
-        }
-        
-        return const MainNavigation();
+        // User is not authenticated - show login screen
+        return LoginScreen(
+          onLoginSuccess: () {
+            // Refresh the auth state after successful login
+            _refreshAuthState();
+          },
+        );
       },
     );
   }

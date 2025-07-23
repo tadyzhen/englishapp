@@ -48,7 +48,7 @@ class _LoginScreenState extends State<LoginScreen> {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('login_method', 'email');
       
-      // Show success message
+      // Show success message and navigate
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -57,12 +57,8 @@ class _LoginScreenState extends State<LoginScreen> {
           ),
         );
         
-        // Wait for the message to show before navigating
-        await Future.delayed(const Duration(milliseconds: 800));
-        
-        if (mounted) {
-          widget.onLoginSuccess();
-        }
+        // Navigate immediately
+        widget.onLoginSuccess();
       }
     } on FirebaseAuthException catch (e) {
       setState(() {
@@ -145,7 +141,6 @@ class _LoginScreenState extends State<LoginScreen> {
                 duration: Duration(seconds: 2),
               ),
             );
-            await Future.delayed(const Duration(milliseconds: 1500));
           } else {
             // Show login success message for returning users
             ScaffoldMessenger.of(context).showSnackBar(
@@ -154,12 +149,10 @@ class _LoginScreenState extends State<LoginScreen> {
                 duration: Duration(seconds: 1),
               ),
             );
-            await Future.delayed(const Duration(milliseconds: 800));
           }
           
-          if (mounted) {
-            widget.onLoginSuccess();
-          }
+          // Navigate immediately after showing message
+          widget.onLoginSuccess();
         }
       }
     } on FirebaseAuthException catch (e) {
@@ -202,13 +195,8 @@ class _LoginScreenState extends State<LoginScreen> {
           ),
         );
         
-        // Wait for the message to show before navigating
-        await Future.delayed(const Duration(milliseconds: 800));
-        
-        // Ensure we're in the widget tree before navigating
-        if (mounted) {
-          widget.onLoginSuccess();
-        }
+        // Navigate immediately
+        widget.onLoginSuccess();
       }
     } catch (e) {
       debugPrint('Guest login error: $e');
