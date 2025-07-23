@@ -3,12 +3,11 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle, HapticFeedback;
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:url_launcher/url_launcher.dart';
-import 'package:flutter_tts/flutter_tts.dart';
-import 'package:flutter/services.dart';
-import 'package:vibration/vibration.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter_tts/flutter_tts.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'package:vibration/vibration.dart';
 import 'firebase_options.dart';
 import 'dictionary_webview.dart';
 import 'screens/login_screen.dart';
@@ -119,73 +118,104 @@ class SettingsProvider extends InheritedNotifier<AppSettings> {
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   
-  // Initialize Firebase
+  // Initialize Firebase first
   try {
     await Firebase.initializeApp(
       options: DefaultFirebaseOptions.currentPlatform,
     );
-    print('Firebase initialized successfully');
+    debugPrint('Firebase initialized successfully');
   } catch (e) {
-    print('Error initializing Firebase: $e');
+    debugPrint('Error initializing Firebase: $e');
   }
   
-  final settings = await AppSettings.load();
-  runApp(SettingsProvider(notifier: settings, child: const EnglishApp()));
+  // Start the app after Firebase is ready
+  runApp(const EnglishApp());
 }
 
-class EnglishApp extends StatelessWidget {
+class EnglishApp extends StatefulWidget {
   const EnglishApp({super.key});
 
   @override
+  State<EnglishApp> createState() => _EnglishAppState();
+}
+
+class _EnglishAppState extends State<EnglishApp> {
+  AppSettings? _settings;
+  bool _isLoadingSettings = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSettings();
+  }
+
+  Future<void> _loadSettings() async {
+    try {
+      final settings = await AppSettings.load();
+      if (mounted) {
+        setState(() {
+          _settings = settings;
+          _isLoadingSettings = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error loading settings: $e');
+      // Use default settings if loading fails
+      if (mounted) {
+        setState(() {
+          _settings = AppSettings(themeMode: ThemeMode.system);
+          _isLoadingSettings = false;
+        });
+      }
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final settings = SettingsProvider.of(context);
-    
-    return AnimatedBuilder(
-      animation: settings,
-      builder: (context, _) {
-        return MaterialApp(
-          debugShowCheckedModeBanner: false,
-          title: '英文學習助手',
-          theme: ThemeData(
-            fontFamily: 'SF Pro Display',
-            scaffoldBackgroundColor: Colors.white,
-            colorScheme: ColorScheme.fromSwatch().copyWith(
-              primary: const Color(0xFF007AFF),
-              secondary: const Color(0xFF007AFF),
+    // Show a simple loading screen while settings are loading
+    if (_isLoadingSettings || _settings == null) {
+      return MaterialApp(
+        title: 'English Learning App',
+        debugShowCheckedModeBanner: false,
+        home: const Scaffold(
+          body: Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                CircularProgressIndicator(),
+                SizedBox(height: 16),
+                Text('Loading...', style: TextStyle(fontSize: 16)),
+              ],
             ),
-            appBarTheme: const AppBarTheme(
-              backgroundColor: Colors.white,
-              elevation: 0,
-              centerTitle: true,
-              iconTheme: IconThemeData(color: Color(0xFF222222)),
-              titleTextStyle: TextStyle(
-                color: Color(0xFF222222),
-                fontSize: 18,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            primarySwatch: Colors.blue,
-            visualDensity: VisualDensity.adaptivePlatformDensity,
           ),
-          darkTheme: ThemeData.dark().copyWith(
-            appBarTheme: const AppBarTheme(
-              backgroundColor: Color(0xFF121212),
-              elevation: 0,
-              centerTitle: true,
-              iconTheme: IconThemeData(color: Colors.white),
-              titleTextStyle: TextStyle(
-                color: Colors.white,
-                fontSize: 18,
-                fontWeight: FontWeight.w600,
-              ),
+        ),
+      );
+    }
+
+    return SettingsProvider(
+      notifier: _settings!,
+      child: AnimatedBuilder(
+        animation: _settings!,
+        builder: (context, child) {
+          return MaterialApp(
+            title: 'English Learning App',
+            debugShowCheckedModeBanner: false,
+            theme: ThemeData(
+              colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
+              useMaterial3: true,
             ),
-            primaryColor: const Color(0xFF1E88E5),
-            visualDensity: VisualDensity.adaptivePlatformDensity,
-          ),
-          themeMode: settings.themeMode,
-          home: const AuthWrapper(),
-        );
-      },
+            darkTheme: ThemeData(
+              colorScheme: ColorScheme.fromSeed(
+                seedColor: Colors.blue,
+                brightness: Brightness.dark,
+              ),
+              useMaterial3: true,
+            ),
+            themeMode: _settings!.themeMode,
+            home: const AuthWrapper(),
+          );
+        },
+      ),
     );
   }
 }
@@ -230,10 +260,12 @@ class _AuthWrapperState extends State<AuthWrapper> {
   }
 
   void _refreshAuthState() {
-    setState(() {
-      _isLoading = true;
-    });
-    _checkAuthState();
+    // Force a rebuild to check current auth state
+    if (mounted) {
+      setState(() {
+        _isLoading = false; // Don't show loading, just refresh
+      });
+    }
   }
 
   @override
@@ -267,6 +299,23 @@ class _AuthWrapperState extends State<AuthWrapper> {
         // User is authenticated
         if (snapshot.hasData && snapshot.data != null) {
           return const MainNavigation();
+        }
+
+        // Check if we have a valid login method but user is null (edge case)
+        if (_loginMethod == 'google' || _loginMethod == 'email') {
+          // Give Firebase a moment to update auth state
+          return const Scaffold(
+            body: Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  CircularProgressIndicator(),
+                  SizedBox(height: 16),
+                  Text('正在登入...'),
+                ],
+              ),
+            ),
+          );
         }
 
         // User is not authenticated - show login screen

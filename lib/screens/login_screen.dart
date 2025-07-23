@@ -133,12 +133,15 @@ class _LoginScreenState extends State<LoginScreen> {
         await prefs.setString('login_method', 'google');
         
         if (mounted) {
+          debugPrint('Google login successful. User: ${user.email}, isNewUser: $isNewUser');
+          
           if (isNewUser) {
             // Show welcome message for new users
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
                 content: Text('註冊成功！歡迎使用英文學習助手'),
                 duration: Duration(seconds: 2),
+                backgroundColor: Colors.green,
               ),
             );
           } else {
@@ -147,10 +150,12 @@ class _LoginScreenState extends State<LoginScreen> {
               const SnackBar(
                 content: Text('登入成功！'),
                 duration: Duration(seconds: 1),
+                backgroundColor: Colors.green,
               ),
             );
           }
           
+          debugPrint('Calling onLoginSuccess callback');
           // Navigate immediately after showing message
           widget.onLoginSuccess();
         }
