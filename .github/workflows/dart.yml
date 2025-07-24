@@ -1,2 +1,24 @@
-- name: Build iOS Action
-  uses: sparkfabrik/ios-build-action@v2.3.2
+name: Build iOS IPA
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.19.5' # 依照你專案版本設定
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build IPA
+        run: |
+          flutter build ios --release --no-codesign
