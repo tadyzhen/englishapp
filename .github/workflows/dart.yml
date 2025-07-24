@@ -29,6 +29,10 @@ jobs:
       - name: Clean Flutter project
         run: flutter clean
 
+      # 強制升級 Android 專案結構
+      - name: Upgrade Android project
+        run: flutter create --platforms=android .
+
       # 取得相依套件
       - name: Install dependencies
         run: flutter pub get
