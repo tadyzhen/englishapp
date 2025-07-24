@@ -41,15 +41,33 @@ jobs:
       - name: Build iOS (no codesign)
         run: flutter build ios --release --no-codesign
 
-      # 將 Runner.app 壓縮成 zip 檔
-      - name: Zip iOS Build
-        run: ditto -c -k --sequesterRsrc --keepParent build/ios/iphoneos/Runner.app Runner.zip
+      # 更新 CocoaPods repo
+      - name: Update Pods Repo
+        run: pod repo update
+        working-directory: ios
 
-      # 建立 Release 並上傳 IPA
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
+      # 建立 Payload 目錄
+      - name: Create Payload Directory
+        run: mkdir Payload
+        working-directory: build/ios/iphoneos
+
+      # 將 App 移至 Payload
+      - name: Move App to Payload
+        run: mv Runner.app Payload
+        working-directory: build/ios/iphoneos
+
+      # 壓縮成 IPA
+      - name: Zip to IPA
+        run: zip -qq -r -9 FlutterIpaExport.ipa Payload
+        working-directory: build/ios/iphoneos
+
+      # 上傳到 Release
+      - name: Upload IPA to Release
+        uses: svenstaro/upload-release-action@v2
         with:
-          tag_name: build-${{ github.run_number }}
-          files: Runner.zip
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: build/ios/iphoneos/FlutterIpaExport.ipa
+          asset_name: englishapp-${{ github.run_number }}.ipa
+          tag: build-${{ github.run_number }}
+          overwrite: true
+          body: "Build ${{ github.run_number }} release"
