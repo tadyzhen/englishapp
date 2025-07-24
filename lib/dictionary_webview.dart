@@ -24,7 +24,8 @@ class _DictionaryWebViewState extends State<DictionaryWebView> {
     super.initState();
 
     // ✅ 安全處理單字（避免斜線、多字等造成錯誤）
-    final original = widget.word.trim().toLowerCase();
+    // ✅ 移除括號內容 (例如: enhancement(s) -> enhancement)
+    final original = widget.word.trim().toLowerCase().replaceAll(RegExp(r'\(.*\)'), '');
     final lookupWord = switch (original) {
       'a/an' => 'a',
       'is/are' => 'is',

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'firestore_sync.dart';
 import 'package:flutter/services.dart' show rootBundle, HapticFeedback;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -1259,6 +1260,13 @@ class _WordQuizPageState extends State<WordQuizPage> {
     // Save updated known words to shared preferences
     await prefs.setStringList(key, knownWords.toList());
 
+    // --- 雲端同步 ---
+    try {
+      await FirestoreSync.uploadKnownWords(knownWords.toList());
+    } catch (e) {
+      // ignore error, offline fallback
+    }
+
     final nextIndex = _findNextUnfamiliarIndex(currentIndex);
 
     setState(() {
@@ -1292,6 +1300,11 @@ class _WordQuizPageState extends State<WordQuizPage> {
     final prefs = await SharedPreferences.getInstance();
     favoriteWords.add(word);
     await prefs.setStringList('favorite_words', favoriteWords.toList());
+    try {
+      await FirestoreSync.uploadFavorites(favoriteWords.toList());
+    } catch (e) {
+      // ignore error, offline fallback
+    }
     if (mounted) {
       ScaffoldMessenger.of(
         context,
@@ -1503,6 +1516,13 @@ class _WordQuizPageState extends State<WordQuizPage> {
                             'favorite_words',
                             favoriteWords.toList(),
                           );
+                          try {
+                            await FirestoreSync.uploadFavorites(
+                              favoriteWords.toList(),
+                            );
+                          } catch (e) {
+                            // ignore error, offline fallback
+                          }
                           if (mounted) {
                             ScaffoldMessenger.of(
                               context,
@@ -1641,6 +1661,13 @@ class _WordQuizPageState extends State<WordQuizPage> {
                                     'favorite_words',
                                     favoriteWords.toList(),
                                   );
+                                  try {
+                                    await FirestoreSync.uploadFavorites(
+                                      favoriteWords.toList(),
+                                    );
+                                  } catch (e) {
+                                    // ignore error, offline fallback
+                                  }
                                   if (mounted) {
                                     ScaffoldMessenger.of(context).showSnackBar(
                                       SnackBar(content: Text('已移除收藏')),
@@ -1729,6 +1756,11 @@ class _FavoritePageState extends State<FavoritePage> {
     List<String> favs = prefs.getStringList('favorite_words') ?? [];
     favs.remove(english);
     await prefs.setStringList('favorite_words', favs);
+    try {
+      await FirestoreSync.uploadFavorites(favs);
+    } catch (e) {
+      // ignore error, offline fallback
+    }
     setState(() {
       favWords.removeWhere((w) => w.english == english);
     });
@@ -2349,6 +2381,7 @@ class AllWordsPage extends StatefulWidget {
 }
 
 class _AllWordsPageState extends State<AllWordsPage> {
+  late FlutterTts flutterTts;
   List<Word> _allWords = [];
   List<Word> _filteredWords = [];
   final TextEditingController _searchController = TextEditingController();
@@ -2357,8 +2390,27 @@ class _AllWordsPageState extends State<AllWordsPage> {
   @override
   void initState() {
     super.initState();
+    flutterTts = FlutterTts();
+    _initTts();
     _loadAllWords();
     _searchController.addListener(_filterWords);
+  }
+
+  Future<void> _initTts() async {
+        final settings = SettingsProvider.of(context);
+    await flutterTts.setLanguage("en-US");
+    await flutterTts.setSpeechRate(settings.speechRate);
+    await flutterTts.setPitch(settings.speechPitch);
+    if (settings.ttsVoice != null) {
+      await flutterTts.setVoice(settings.ttsVoice!);
+    }
+  }
+
+  Future<void> speakWord(String word) async {
+    final textToSpeak = word.replaceAll('/', ' ');
+    if (textToSpeak.trim().isEmpty) return;
+    await _initTts(); // Re-initialize to apply latest settings
+    await flutterTts.speak(textToSpeak);
   }
 
   Future<void> _loadAllWords() async {
@@ -2499,6 +2551,7 @@ class _AllWordsPageState extends State<AllWordsPage> {
 
   @override
   void dispose() {
+    flutterTts.stop();
     _searchController.dispose();
     super.dispose();
   }
@@ -2517,6 +2570,16 @@ class _AllWordsPageState extends State<AllWordsPage> {
                 labelText: '搜尋單字',
                 hintText: '輸入單字後按 Enter 搜尋',
                 prefixIcon: const Icon(Icons.search),
+                suffixIcon: _searchController.text.isNotEmpty
+                    ? IconButton(
+                        icon: const Icon(Icons.clear),
+                        onPressed: () {
+                          setState(() {
+                            _searchController.clear();
+                          });
+                        },
+                      )
+                    : null,
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
                 ),
@@ -2564,43 +2627,21 @@ class _AllWordsPageState extends State<AllWordsPage> {
                 final word = _filteredWords[index];
                 // Get the first part before "/" for dictionary lookup
                 final lookupWord = word.english.split('/').first.trim();
-                bool isPressing = false;
 
-                return StatefulBuilder(
-                  builder: (context, setState) {
-                    return GestureDetector(
-                      onTapDown: (_) {
-                        setState(() => isPressing = true);
-                        // Navigate immediately on press down
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) =>
-                                DictionaryWebView(word: lookupWord),
-                          ),
-                        );
-                      },
-                      onTapUp: (_) {
-                        setState(() => isPressing = false);
-                      },
-                      onTapCancel: () {
-                        setState(() => isPressing = false);
-                      },
-                      child: AnimatedContainer(
-                        duration: const Duration(milliseconds: 50),
-                        color: isPressing ? Colors.grey[200] : null,
-                        child: ListTile(
-                          title: Text(word.english),
-                          subtitle: Text('等級 ${word.level} - ${word.chinese}'),
-                          trailing: const Icon(
-                            Icons.launch,
-                            size: 16,
-                            color: Colors.blue,
-                          ),
-                        ),
-                      ),
-                    );
+                return ListTile(
+                  title: Text(word.english),
+                  subtitle: Text('等級 ${word.level} - ${word.chinese}'),
+                  onTap: () {
+                    speakWord(word.english);
                   },
+                  onLongPress: () {
+                    _launchURL(lookupWord);
+                  },
+                  trailing: IconButton(
+                    icon: const Icon(Icons.volume_up, color: Colors.grey),
+                    onPressed: () => speakWord(word.english),
+                    tooltip: '發音',
+                  ),
                 );
               },
             ),
@@ -2634,18 +2675,23 @@ class _WordCardState extends State<WordCard> {
       setState(() => _isPressed = true);
     }
 
-    _longPressTimer = Timer(const Duration(milliseconds: 200), () async {
-      // Vibrate first
-      final bool? hasVibrator = await Vibration.hasVibrator();
-      if (hasVibrator == true) {
-        Vibration.vibrate(duration: 50);
-      }
+    _longPressTimer = Timer(const Duration(milliseconds: 500), () async {
+      if (!mounted) return;
 
-      // Launch Cambridge Dictionary
-      final url = Uri.parse(
-          'https://dictionary.cambridge.org/dictionary/english-chinese-traditional/${widget.word}');
-      if (mounted && await canLaunchUrl(url)) {
-        await launchUrl(url, mode: LaunchMode.externalApplication);
+      // 1. 震動
+      await AppUtils.triggerHapticFeedback();
+
+      // 2. 開啟字典 WebView
+      try {
+        await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) =>
+                DictionaryWebView(word: widget.word, isEnglishOnly: false),
+          ),
+        );
+      } catch (e) {
+        if (mounted) AppUtils.showErrorSnackBar(context, '開啟字典時發生錯誤: $e');
       }
     });
   }

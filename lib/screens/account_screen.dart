@@ -48,15 +48,22 @@ class AccountScreen extends StatelessWidget {
           CircleAvatar(
             radius: 50,
             backgroundColor: Colors.blue[100],
-            child: Icon(
-              Icons.person,
-              size: 60,
-              color: Colors.blue[800],
-            ),
+            backgroundImage: (!isGuest && user?.photoURL != null)
+                ? NetworkImage(user!.photoURL!)
+                : null,
+            child: (!isGuest && user?.photoURL != null)
+                ? null
+                : Icon(
+                    Icons.person,
+                    size: 60,
+                    color: Colors.blue[800],
+                  ),
           ),
           const SizedBox(height: 16),
           Text(
-            user?.email ?? '訪客用戶',
+            !isGuest && user?.displayName != null && user!.displayName!.isNotEmpty
+                ? user!.displayName!
+                : (user?.email ?? '訪客用戶'),
             style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 8),
