@@ -8,17 +8,34 @@ jobs:
     runs-on: macos-latest
 
     steps:
+      # 拉專案原始碼（支援 submodules）
       - name: Checkout code
         uses: actions/checkout@v3
+        with:
+          submodules: false # 如你已移除錯誤 submodule，這樣設沒問題
 
+      # 安裝指定版本 Flutter（對應 Dart 3.3）
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.19.5' # 依照你專案版本設定
+          flutter-version: '3.19.5'
+          channel: 'stable'
 
+      # 檢查 Flutter 安裝成功
+      - name: Flutter doctor
+        run: flutter doctor
+
+      # 取得相依套件
       - name: Install dependencies
         run: flutter pub get
 
-      - name: Build IPA
-        run: |
-          flutter build ios --release --no-codesign
+      # 建構 iOS（不簽章）
+      - name: Build iOS (no codesign)
+        run: flutter build ios --release --no-codesign
+
+      # 上傳 IPA 作為可下載檔案
+      - name: Upload IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-ipa
+          path: build/ios/iphoneos/Runner.app
