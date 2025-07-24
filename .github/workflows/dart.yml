@@ -12,44 +12,38 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
         with:
-          submodules: recursive
+          submodules: 'recursive' # 改成 'recursive' 來正確拉取 submodule
 
-      # 安裝 Flutter（3.19.5 對應 Dart 3.3.3）
+      # 安裝指定版本 Flutter（對應 Dart 3.3）
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.19.5'
-          channel: stable
+          channel: 'stable'
 
-      # 確認 Flutter 可用
+      # 檢查 Flutter 安裝成功
       - name: Flutter doctor
         run: flutter doctor
 
-      # 清掉舊的快取
-      - name: Clean project
+      # 清理專案，避免快取問題
+      - name: Clean Flutter project
         run: flutter clean
 
-      # 安裝套件
+      # 強制升級 Android 專案結構
+      - name: Upgrade Android project
+        run: flutter create --platforms=android .
+
+      # 取得相依套件
       - name: Install dependencies
         run: flutter pub get
 
-      # 建構 iOS 專案（不簽名）
-      - name: Build iOS (no code sign)
+      # 建構 iOS（不簽章）
+      - name: Build iOS (no codesign)
         run: flutter build ios --release --no-codesign
 
-      # 使用 xcodebuild 轉成 .ipa（無簽章）
-      - name: Create unsigned IPA
-        run: |
-          mkdir -p Payload
-          cp -r build/ios/iphoneos/Runner.app Payload/
-          zip -r app.ipa Payload
-
-      # 發佈到 GitHub Releases
-      - name: Upload to GitHub Releases
-        uses: softprops/action-gh-release@v2
+      # 上傳 IPA 作為可下載檔案
+      - name: Upload IPA Artifact
+        uses: actions/upload-artifact@v4
         with:
-          name: iOS Release - ${{ github.run_number }}
-          tag_name: ios-release-${{ github.run_number }}
-          files: app.ipa
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          name: ios-ipa
+          path: build/ios/iphoneos/Runner.app
