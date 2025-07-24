@@ -1,49 +1,41 @@
-name: iOS-ipa-build
+name: Build iOS IPA
 
 on:
   workflow_dispatch:
 
 jobs:
-  build-ios:
-    name: 🎉 iOS Build
+  build:
     runs-on: macos-latest
+
     steps:
-      - uses: actions/checkout@v3
-
-      - uses: subosito/flutter-action@v2
+      # 拉專案原始碼（支援 submodules）
+      - name: Checkout code
+        uses: actions/checkout@v3
         with:
+          submodules: false # 如你已移除錯誤 submodule，這樣設沒問題
+
+      # 安裝指定版本 Flutter（對應 Dart 3.3）
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.19.5'
           channel: 'stable'
-          architecture: x64
 
-      - run: flutter pub get
+      # 檢查 Flutter 安裝成功
+      - name: Flutter doctor
+        run: flutter doctor
 
-      - name: Fix Podfile platform version
-        run: |
-          if ! grep -q "^platform :ios" ios/Podfile; then
-            echo "⚙️ Adding platform :ios, '13.0' to Podfile"
-            echo "platform :ios, '13.0'" | cat - ios/Podfile > temp && mv temp ios/Podfile
-          fi
+      # 取得相依套件
+      - name: Install dependencies
+        run: flutter pub get
 
-      - run: pod repo update
-        working-directory: ios
+      # 建構 iOS（不簽章）
+      - name: Build iOS (no codesign)
+        run: flutter build ios --release --no-codesign
 
-      - run: flutter build ios --release --no-codesign
-
-      - run: mkdir Payload
-        working-directory: build/ios/iphoneos
-
-      - run: mv Runner.app/ Payload
-        working-directory: build/ios/iphoneos
-
-      - name: Zip output
-        run: zip -qq -r -9 FlutterIpaExport.ipa Payload
-        working-directory: build/ios/iphoneos
-
-      - name: Upload binaries to release
-        uses: svenstaro/upload-release-action@v2
+      # 上傳 IPA 作為可下載檔案
+      - name: Upload IPA Artifact
+        uses: actions/upload-artifact@v4
         with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: build/ios/iphoneos/FlutterIpaExport.ipa
-          tag: v1.0
-          overwrite: true
-          body: "This is first release"
+          name: ios-ipa
+          path: build/ios/iphoneos/Runner.app
