@@ -1,0 +1,3 @@
+[submodule "web-deploy"]
+	path = web-deploy
+	url = https://github.com/tadyzhen/Englishapp-web-version-.git
