@@ -12,7 +12,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
         with:
-          submodules: false # 如你已移除錯誤 submodule，這樣設沒問題
+          submodules: 'recursive' # 改成 'recursive' 來正確拉取 submodule
 
       # 安裝指定版本 Flutter（對應 Dart 3.3）
       - name: Set up Flutter
@@ -24,6 +24,10 @@ jobs:
       # 檢查 Flutter 安裝成功
       - name: Flutter doctor
         run: flutter doctor
+
+      # 清理專案，避免快取問題
+      - name: Clean Flutter project
+        run: flutter clean
 
       # 取得相依套件
       - name: Install dependencies
