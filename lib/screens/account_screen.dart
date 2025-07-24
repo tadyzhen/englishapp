@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 // Google Sign-In will be handled through Firebase Auth
 import 'package:shared_preferences/shared_preferences.dart';
-import 'login_screen.dart';
+import 'modern_login_screen.dart';
 
 class AccountScreen extends StatelessWidget {
   const AccountScreen({Key? key}) : super(key: key);
@@ -76,7 +76,7 @@ class AccountScreen extends StatelessWidget {
               onTap: () {
                 // Navigate to login screen and remove all previous routes
                 Navigator.of(context).pushAndRemoveUntil(
-                  MaterialPageRoute(builder: (context) => LoginScreen(
+                  MaterialPageRoute(builder: (context) => ModernLoginScreen(
                     onLoginSuccess: () async {
                       // After login, pop the login screen to return to the account screen.
                       if (context.mounted) {

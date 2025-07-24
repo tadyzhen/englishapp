@@ -10,7 +10,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:vibration/vibration.dart';
 import 'firebase_options.dart';
 import 'dictionary_webview.dart';
-import 'screens/login_screen.dart';
+import 'screens/modern_login_screen.dart';
 import 'screens/main_navigation.dart';
 
 // Utility class for shared functionality
@@ -316,12 +316,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
         }
 
         // User is not authenticated - show login screen
-        return LoginScreen(
-          onLoginSuccess: () async {
-            // Refresh the auth state after successful login
-            await _refreshAuthState();
-          },
-        );
+        return ModernLoginScreen(onLoginSuccess: _refreshAuthState);
       },
     );
   }

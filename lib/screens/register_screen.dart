@@ -2,9 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 class RegisterScreen extends StatefulWidget {
-  final VoidCallback onRegisterSuccess;
+  final Future<void> Function() onRegisterSuccess;
+  final String? prefillEmail;
 
-  const RegisterScreen({Key? key, required this.onRegisterSuccess}) : super(key: key);
+  const RegisterScreen({
+    Key? key, 
+    required this.onRegisterSuccess,
+    this.prefillEmail,
+  }) : super(key: key);
 
   @override
   _RegisterScreenState createState() => _RegisterScreenState();
@@ -17,6 +22,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final _confirmPasswordController = TextEditingController();
   bool _isLoading = false;
   String? _errorMessage;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.prefillEmail != null) {
+      _emailController.text = widget.prefillEmail!;
+    }
+  }
 
   @override
   void dispose() {
