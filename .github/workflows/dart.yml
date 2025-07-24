@@ -8,60 +8,61 @@ jobs:
     runs-on: macos-latest
 
     steps:
-      # 拉專案原始碼（支援 submodules）
+      # 拉原始碼 + 支援 submodule
       - name: Checkout code
         uses: actions/checkout@v3
         with:
-          submodules: 'recursive' # 改成 'recursive' 來正確拉取 submodule
+          submodules: recursive
 
-      # 安裝指定版本 Flutter（對應 Dart 3.3）
+      # 安裝 Flutter（建議與本地一致）
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.19.5'
-          channel: 'stable'
+          channel: stable
 
-      # 檢查 Flutter 安裝成功
-      - name: Flutter doctor
+      # 快取 pub 套件與 CocoaPods
+      - name: Cache Flutter & CocoaPods
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.pub-cache
+            ios/Pods
+          key: ${{ runner.os }}-flutter-${{ hashFiles('**/pubspec.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-flutter-
+
+      # flutter doctor 檢查
+      - name: Flutter Doctor
         run: flutter doctor
 
-      # 清理專案，避免快取問題
-      - name: Clean Flutter project
+      # flutter clean
+      - name: Clean project
         run: flutter clean
 
-      # 強制升級 Android 專案結構
-      - name: Upgrade Android project
-        run: flutter create --platforms=android .
-
-      # 取得相依套件
+      # 取得 Flutter 相依套件
       - name: Install dependencies
         run: flutter pub get
 
-      # 建構 iOS（不簽章）
+      # 更新 CocoaPods
+      - name: Install CocoaPods
+        run: |
+          cd ios
+          pod install
+
+      # 建構 iOS App（不簽章）
       - name: Build iOS (no codesign)
         run: flutter build ios --release --no-codesign
 
-      # 更新 CocoaPods repo
-      - name: Update Pods Repo
-        run: pod repo update
-        working-directory: ios
+      # 建立 Payload 資料夾並移動 App
+      - name: Prepare IPA
+        run: |
+          cd build/ios/iphoneos
+          mkdir Payload
+          mv Runner.app Payload/
+          zip -qq -r -9 FlutterIpaExport.ipa Payload
 
-      # 建立 Payload 目錄
-      - name: Create Payload Directory
-        run: mkdir Payload
-        working-directory: build/ios/iphoneos
-
-      # 將 App 移至 Payload
-      - name: Move App to Payload
-        run: mv Runner.app Payload
-        working-directory: build/ios/iphoneos
-
-      # 壓縮成 IPA
-      - name: Zip to IPA
-        run: zip -qq -r -9 FlutterIpaExport.ipa Payload
-        working-directory: build/ios/iphoneos
-
-      # 上傳到 Release
+      # 上傳 IPA 到 GitHub Release
       - name: Upload IPA to Release
         uses: svenstaro/upload-release-action@v2
         with:
