@@ -117,7 +117,7 @@ class SettingsProvider extends InheritedNotifier<AppSettings> {
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  
+
   // Initialize Firebase first
   try {
     await Firebase.initializeApp(
@@ -127,7 +127,7 @@ void main() async {
   } catch (e) {
     debugPrint('Error initializing Firebase: $e');
   }
-  
+
   // Start the app after Firebase is ready
   runApp(const EnglishApp());
 }
@@ -241,7 +241,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
     try {
       final prefs = await SharedPreferences.getInstance();
       final loginMethod = prefs.getString('login_method');
-      
+
       if (mounted) {
         setState(() {
           _loginMethod = loginMethod;
@@ -397,9 +397,8 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
     final favs = prefs.getStringList('favorite_words') ?? [];
     String data = await rootBundle.loadString('assets/words.json');
     List<dynamic> jsonResult = json.decode(data);
-    List<Word> allWords = jsonResult
-        .map((item) => Word.fromJson(item))
-        .toList();
+    List<Word> allWords =
+        jsonResult.map((item) => Word.fromJson(item)).toList();
     setState(() {
       favoriteWords = allWords.where((w) => favs.contains(w.english)).toList();
     });
@@ -798,14 +797,13 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
                             style: TextStyle(
                               fontSize: 28,
                               fontWeight: FontWeight.w600,
-                              color:
-                                  Theme.of(context).brightness ==
+                              color: Theme.of(context).brightness ==
                                       Brightness.dark
                                   ? Colors.white
                                   : (Theme.of(
-                                          context,
-                                        ).textTheme.bodyLarge?.color ??
-                                        const Color(0xFF222222)),
+                                        context,
+                                      ).textTheme.bodyLarge?.color ??
+                                      const Color(0xFF222222)),
                               letterSpacing: 1.2,
                             ),
                           ),
@@ -1526,8 +1524,7 @@ class _WordQuizPageState extends State<WordQuizPage> {
                               vertical: 100,
                             ),
                             decoration: BoxDecoration(
-                              color:
-                                  Theme.of(context).brightness ==
+                              color: Theme.of(context).brightness ==
                                       Brightness.dark
                                   ? const Color(0xFF232323)
                                   : Colors.white,
@@ -1540,8 +1537,7 @@ class _WordQuizPageState extends State<WordQuizPage> {
                                 ),
                               ],
                               border: Border.all(
-                                color:
-                                    Theme.of(context).brightness ==
+                                color: Theme.of(context).brightness ==
                                         Brightness.dark
                                     ? const Color(0xFF444444)
                                     : const Color(0xFFE5E5EA),
@@ -1560,8 +1556,7 @@ class _WordQuizPageState extends State<WordQuizPage> {
                                         style: TextStyle(
                                           fontSize: 48,
                                           fontWeight: FontWeight.bold,
-                                          color:
-                                              Theme.of(context).brightness ==
+                                          color: Theme.of(context).brightness ==
                                                   Brightness.dark
                                               ? Colors.white
                                               : const Color(0xFF222222),
@@ -1580,8 +1575,8 @@ class _WordQuizPageState extends State<WordQuizPage> {
                                       onPressed: isSpeaking
                                           ? null
                                           : () => speakWord(
-                                              words[currentIndex].english,
-                                            ),
+                                                words[currentIndex].english,
+                                              ),
                                     ),
                                   ],
                                 ),
@@ -1590,8 +1585,7 @@ class _WordQuizPageState extends State<WordQuizPage> {
                                   words[currentIndex].pos,
                                   style: TextStyle(
                                     fontSize: 22,
-                                    color:
-                                        Theme.of(context).brightness ==
+                                    color: Theme.of(context).brightness ==
                                             Brightness.dark
                                         ? Colors.white70
                                         : const Color(0xFF888888),
@@ -1610,9 +1604,9 @@ class _WordQuizPageState extends State<WordQuizPage> {
                                             fontSize: 32,
                                             color:
                                                 Theme.of(context).brightness ==
-                                                    Brightness.dark
-                                                ? Colors.blue[200]
-                                                : const Color(0xFF007AFF),
+                                                        Brightness.dark
+                                                    ? Colors.blue[200]
+                                                    : const Color(0xFF007AFF),
                                             fontWeight: FontWeight.w600,
                                           ),
                                           overflow: TextOverflow.ellipsis,
@@ -1630,8 +1624,8 @@ class _WordQuizPageState extends State<WordQuizPage> {
                             child: IconButton(
                               icon: Icon(
                                 favoriteWords.contains(
-                                      words[currentIndex].english,
-                                    )
+                                  words[currentIndex].english,
+                                )
                                     ? Icons.star
                                     : Icons.star_border,
                                 color: Colors.amber,
@@ -1868,9 +1862,8 @@ class _QuizPageState extends State<QuizPage> {
     // 預先產生每題的選項
     optionsList = quizWords.map((answer) {
       List<Word> options = [answer];
-      List<Word> pool = allWords
-          .where((w) => w.english != answer.english)
-          .toList();
+      List<Word> pool =
+          allWords.where((w) => w.english != answer.english).toList();
       pool.shuffle();
       while (options.length < 4 && pool.isNotEmpty) {
         options.add(pool.removeLast());
@@ -1931,13 +1924,11 @@ class _QuizPageState extends State<QuizPage> {
         current--;
         // When going back, show the answer state if it was already answered
         _showAnswer = userAnswers[current] != -1;
-        _selectedIndex = userAnswers[current] != -1
-            ? userAnswers[current]
-            : null;
+        _selectedIndex =
+            userAnswers[current] != -1 ? userAnswers[current] : null;
         _isProcessing = false;
         // Show translations if this question was answered incorrectly
-        _showAllTranslations =
-            _showAnswer &&
+        _showAllTranslations = _showAnswer &&
             _selectedIndex != null &&
             optionsList[current][_selectedIndex!].english !=
                 quizWords[current].english;
@@ -2085,14 +2076,13 @@ class _QuizPageState extends State<QuizPage> {
                                           : opt.chinese,
                                       style: TextStyle(
                                         fontSize: 18,
-                                        color:
-                                            isSelected &&
+                                        color: isSelected &&
                                                 !isCorrect &&
                                                 _showAnswer
                                             ? Colors.red
                                             : (isCorrect && _showAnswer
-                                                  ? Colors.green
-                                                  : null),
+                                                ? Colors.green
+                                                : null),
                                         fontWeight: FontWeight.bold,
                                       ),
                                       textAlign: TextAlign.center,
@@ -2113,10 +2103,10 @@ class _QuizPageState extends State<QuizPage> {
                                             color: isCorrect && _showAnswer
                                                 ? Colors.green[700]
                                                 : (isSelected &&
-                                                          !isCorrect &&
-                                                          _showAnswer
-                                                      ? Colors.red[700]
-                                                      : Colors.grey[600]),
+                                                        !isCorrect &&
+                                                        _showAnswer
+                                                    ? Colors.red[700]
+                                                    : Colors.grey[600]),
                                             fontStyle: FontStyle.italic,
                                             fontWeight: isCorrect && _showAnswer
                                                 ? FontWeight.bold
@@ -2333,8 +2323,8 @@ class QuizResultsPage extends StatelessWidget {
                           color: isCorrectOption
                               ? Colors.green[300]!
                               : (isUserChoice
-                                    ? Colors.red[300]!
-                                    : Colors.grey[300]!),
+                                  ? Colors.red[300]!
+                                  : Colors.grey[300]!),
                         ),
                       );
                     }).toList(),
@@ -2464,8 +2454,8 @@ class _AllWordsPageState extends State<AllWordsPage> {
         tempWords.sort((a, b) {
           // Primary sort: first letter of English word
           int firstLetterComp = a.english[0].toLowerCase().compareTo(
-            b.english[0].toLowerCase(),
-          );
+                b.english[0].toLowerCase(),
+              );
           if (firstLetterComp != 0) return firstLetterComp;
 
           // Secondary sort: word length (shorter words first)
@@ -2631,27 +2621,44 @@ class WordCard extends StatefulWidget {
 
 class _WordCardState extends State<WordCard> {
   bool _isPressed = false;
+  Timer? _longPressTimer;
+
+  @override
+  void dispose() {
+    _longPressTimer?.cancel();
+    super.dispose();
+  }
 
   void _onTapDown(TapDownDetails details) {
     if (mounted) {
       setState(() => _isPressed = true);
-      AppUtils.triggerHapticFeedback();
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) => DictionaryWebView(word: widget.word),
-        ),
-      );
     }
+
+    _longPressTimer = Timer(const Duration(milliseconds: 200), () async {
+      // Vibrate first
+      final bool? hasVibrator = await Vibration.hasVibrator();
+      if (hasVibrator == true) {
+        Vibration.vibrate(duration: 50);
+      }
+
+      // Launch Cambridge Dictionary
+      final url = Uri.parse(
+          'https://dictionary.cambridge.org/dictionary/english-chinese-traditional/${widget.word}');
+      if (mounted && await canLaunchUrl(url)) {
+        await launchUrl(url, mode: LaunchMode.externalApplication);
+      }
+    });
   }
 
   void _onTapUp(TapUpDetails details) {
+    _longPressTimer?.cancel();
     if (mounted) {
       setState(() => _isPressed = false);
     }
   }
 
   void _onTapCancel() {
+    _longPressTimer?.cancel();
     if (mounted) {
       setState(() => _isPressed = false);
     }
@@ -2665,7 +2672,8 @@ class _WordCardState extends State<WordCard> {
       onTapCancel: _onTapCancel,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 100),
-        transform: _isPressed ? (Matrix4.identity()..scale(0.95)) : Matrix4.identity(),
+        transform:
+            _isPressed ? (Matrix4.identity()..scale(0.95)) : Matrix4.identity(),
         child: Card(
           child: Padding(
             padding: const EdgeInsets.all(16.0),
