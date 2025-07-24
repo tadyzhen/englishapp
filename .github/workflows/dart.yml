@@ -41,9 +41,15 @@ jobs:
       - name: Build iOS (no codesign)
         run: flutter build ios --release --no-codesign
 
-      # 上傳 IPA 作為可下載檔案
-      - name: Upload IPA Artifact
-        uses: actions/upload-artifact@v4
+      # 將 Runner.app 壓縮成 zip 檔
+      - name: Zip iOS Build
+        run: ditto -c -k --sequesterRsrc --keepParent build/ios/iphoneos/Runner.app Runner.zip
+
+      # 建立 Release 並上傳 IPA
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
         with:
-          name: ios-ipa
-          path: build/ios/iphoneos/Runner.app
+          tag_name: build-${{ github.run_number }}
+          files: Runner.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
