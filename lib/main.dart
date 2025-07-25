@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'firestore_sync.dart';
 import 'package:flutter/services.dart' show rootBundle, HapticFeedback;
@@ -129,8 +130,14 @@ void main() async {
     debugPrint('Error initializing Firebase: $e');
   }
 
-  // Start the app after Firebase is ready
-  runApp(const EnglishApp());
+  final settings = await AppSettings.load();
+
+  runApp(
+    SettingsProvider(
+      notifier: settings,
+      child: const EnglishApp(),
+    ),
+  );
 }
 
 class EnglishApp extends StatefulWidget {
@@ -141,82 +148,26 @@ class EnglishApp extends StatefulWidget {
 }
 
 class _EnglishAppState extends State<EnglishApp> {
-  AppSettings? _settings;
-  bool _isLoadingSettings = true;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadSettings();
-  }
-
-  Future<void> _loadSettings() async {
-    try {
-      final settings = await AppSettings.load();
-      if (mounted) {
-        setState(() {
-          _settings = settings;
-          _isLoadingSettings = false;
-        });
-      }
-    } catch (e) {
-      debugPrint('Error loading settings: $e');
-      // Use default settings if loading fails
-      if (mounted) {
-        setState(() {
-          _settings = AppSettings(themeMode: ThemeMode.system);
-          _isLoadingSettings = false;
-        });
-      }
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
-    // Show a simple loading screen while settings are loading
-    if (_isLoadingSettings || _settings == null) {
-      return MaterialApp(
-        title: 'English Learning App',
-        debugShowCheckedModeBanner: false,
-        home: const Scaffold(
-          body: Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                CircularProgressIndicator(),
-                SizedBox(height: 16),
-                Text('Loading...', style: TextStyle(fontSize: 16)),
-              ],
-            ),
-          ),
-        ),
-      );
-    }
+    final settings = SettingsProvider.of(context);
 
-    return SettingsProvider(
-      notifier: _settings!,
-      child: AnimatedBuilder(
-        animation: _settings!,
-        builder: (context, child) {
-          return MaterialApp(
-            title: 'English Learning App',
-            debugShowCheckedModeBanner: false,
-            theme: ThemeData(
-              colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
-              useMaterial3: true,
-            ),
-            darkTheme: ThemeData(
-              colorScheme: ColorScheme.fromSeed(
-                seedColor: Colors.blue,
-                brightness: Brightness.dark,
-              ),
-              useMaterial3: true,
-            ),
-            themeMode: _settings!.themeMode,
-            home: const AuthWrapper(),
-          );
-        },
+    return MaterialApp(
+      title: '高嚴凱是給學測7000單',
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData(
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
+        useMaterial3: true,
       ),
+      darkTheme: ThemeData(
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: Colors.blue,
+          brightness: Brightness.dark,
+        ),
+        useMaterial3: true,
+      ),
+      themeMode: settings.themeMode,
+      home: const AuthWrapper(),
     );
   }
 }
@@ -229,6 +180,7 @@ class AuthWrapper extends StatefulWidget {
 }
 
 class _AuthWrapperState extends State<AuthWrapper> {
+  Future<void>? _syncFuture;
   bool _isLoading = true;
   String? _loginMethod;
 
@@ -266,6 +218,31 @@ class _AuthWrapperState extends State<AuthWrapper> {
     await _checkAuthState();
   }
 
+  Future<void> _syncUserDataAndNavigate() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return; // Should not happen here
+
+    try {
+      final userData = await FirestoreSync.downloadUserData();
+      if (userData != null && mounted) {
+        final prefs = await SharedPreferences.getInstance();
+        final knownWords = List<String>.from(userData['knownWords'] ?? []);
+        final favorites = List<String>.from(userData['favorites'] ?? []);
+
+        await prefs.setStringList('knownWords', knownWords);
+        await prefs.setStringList('favoriteWords', favorites);
+        debugPrint('User data synced from Firestore: ${knownWords.length} known, ${favorites.length} favorites.');
+      }
+    } catch (e) {
+      debugPrint('Error syncing user data: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('同步資料失敗，請稍後再試')),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
@@ -296,7 +273,35 @@ class _AuthWrapperState extends State<AuthWrapper> {
 
         // User is authenticated
         if (snapshot.hasData && snapshot.data != null) {
-          return const MainNavigation();
+          // User is authenticated. Initialize sync future if it's null.
+          if (_syncFuture == null) {
+            _syncFuture = _syncUserDataAndNavigate();
+          }
+
+          // Use the stored future for the FutureBuilder
+          return FutureBuilder(
+            future: _syncFuture,
+            builder: (context, snapshot) {
+              // When sync is done, navigate to the main screen
+              if (snapshot.connectionState == ConnectionState.done) {
+                // Important: Do not reset _syncFuture here to avoid re-sync on rebuilds
+                return const MainNavigation();
+              }
+              // While loading, show a loading indicator
+              return const Scaffold(
+                body: Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      CircularProgressIndicator(),
+                      SizedBox(height: 16),
+                      Text('正在同步您的進度...'),
+                    ],
+                  ),
+                ),
+              );
+            },
+          );
         }
 
         // Check if we have a valid login method but user is null (edge case)
@@ -317,6 +322,8 @@ class _AuthWrapperState extends State<AuthWrapper> {
         }
 
         // User is not authenticated - show login screen
+        // Reset the sync future so it can be re-initialized on next login
+        _syncFuture = null; 
         return ModernLoginScreen(onLoginSuccess: _refreshAuthState);
       },
     );
@@ -1192,8 +1199,8 @@ class _WordQuizPageState extends State<WordQuizPage> {
     final prefs = await SharedPreferences.getInstance();
     String level = widget.initialLevel ?? temp.keys.first;
     List<Word> wordList = List<Word>.from(temp[level] ?? []);
-    Set<String> known = prefs.getStringList('known_$level')?.toSet() ?? {};
-    Set<String> favs = prefs.getStringList('favorite_words')?.toSet() ?? {};
+    Set<String> known = prefs.getStringList('knownWords')?.toSet() ?? {};
+    Set<String> favs = prefs.getStringList('favoriteWords')?.toSet() ?? {};
 
     int firstUnfamiliar = -1;
     if (widget.initialWordIndex != null) {
