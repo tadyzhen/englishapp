@@ -1101,7 +1101,7 @@ class _WordQuizPageState extends State<WordQuizPage> {
   bool ttsReady = false;
   bool isSpeaking = false;
   bool _isPressed = false;
-  DateTime? _pressStartTime;
+  Timer? _longPressTimer;
 
   // Open Cambridge Dictionary for the current word in WebView
   Future<void> _openDictionary() async {
@@ -1159,6 +1159,7 @@ class _WordQuizPageState extends State<WordQuizPage> {
 
   @override
   void dispose() {
+    _longPressTimer?.cancel();
     flutterTts.stop();
     super.dispose();
   }
@@ -1247,8 +1248,7 @@ class _WordQuizPageState extends State<WordQuizPage> {
 
   Future<void> handleSwipe(bool known) async {
     if (isFinished) return;
-    final prefs = await SharedPreferences.getInstance();
-    String key = 'known_${selectedLevel ?? ''}';
+
     String wordKey = words[currentIndex].english;
 
     // Update known words set based on swipe direction
@@ -1257,18 +1257,10 @@ class _WordQuizPageState extends State<WordQuizPage> {
     } else {
       knownWords.remove(wordKey);
     }
-    // Save updated known words to shared preferences
-    await prefs.setStringList(key, knownWords.toList());
-
-    // --- 雲端同步 ---
-    try {
-      await FirestoreSync.uploadKnownWords(knownWords.toList());
-    } catch (e) {
-      // ignore error, offline fallback
-    }
 
     final nextIndex = _findNextUnfamiliarIndex(currentIndex);
 
+    // Update UI immediately for instant response
     setState(() {
       // Always update knownCount to reflect current knownWords size
       knownCount = knownWords.length;
@@ -1280,10 +1272,30 @@ class _WordQuizPageState extends State<WordQuizPage> {
       }
     });
 
+    // Perform async operations without blocking UI
+    _saveProgressAsync(known, wordKey);
+
+    // Auto-speak immediately if enabled
     final settings = SettingsProvider.of(context);
     if (settings.autoSpeak && !isFinished && currentIndex < words.length) {
-      await Future.delayed(const Duration(milliseconds: 300));
       speakWord(words[currentIndex].english);
+    }
+  }
+
+  // Async method to save progress without blocking UI
+  Future<void> _saveProgressAsync(bool known, String wordKey) async {
+    try {
+      // Save to SharedPreferences
+      final prefs = await SharedPreferences.getInstance();
+      String key = 'known_${selectedLevel ?? ''}';
+      await prefs.setStringList(key, knownWords.toList());
+
+      // Cloud sync (fire and forget)
+      FirestoreSync.uploadKnownWords(knownWords.toList()).catchError((e) {
+        // Silently handle errors for offline fallback
+      });
+    } catch (e) {
+      // Handle any errors silently
     }
   }
 
@@ -1483,29 +1495,32 @@ class _WordQuizPageState extends State<WordQuizPage> {
                           showChinese = !showChinese;
                         });
                       },
-                      onLongPressStart: (_) {
-                        setState(() => _isPressed = true);
-                        HapticFeedback.lightImpact();
-                        _pressStartTime = DateTime.now();
-                      },
-                      onLongPressEnd: (_) {
-                        if (_pressStartTime != null) {
-                          final pressDuration = DateTime.now().difference(
-                            _pressStartTime!,
-                          );
-                          setState(() => _isPressed = false);
+                      onTapDown: (_) {
+                        if (mounted) {
+                          setState(() => _isPressed = true);
+                        }
 
-                          if (pressDuration > const Duration(seconds: 1)) {
-                            _openDictionary();
-                          } else {
-                            setState(() => showChinese = !showChinese);
-                          }
-                        } else {
+                        _longPressTimer = Timer(const Duration(milliseconds: 500), () async {
+                          if (!mounted) return;
+
+                          // Trigger haptic feedback
+                          await HapticFeedback.lightImpact();
+
+                          // Open dictionary immediately
+                          _openDictionary();
+                        });
+                      },
+                      onTapUp: (_) {
+                        _longPressTimer?.cancel();
+                        if (mounted) {
                           setState(() => _isPressed = false);
                         }
                       },
-                      onLongPressCancel: () {
-                        setState(() => _isPressed = false);
+                      onTapCancel: () {
+                        _longPressTimer?.cancel();
+                        if (mounted) {
+                          setState(() => _isPressed = false);
+                        }
                       },
                       onDoubleTap: () async {
                         final word = words[currentIndex].english;
