@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'firestore_sync.dart';
 import 'package:flutter/services.dart' show rootBundle, HapticFeedback;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -1124,8 +1124,6 @@ class _WordQuizPageState extends State<WordQuizPage> {
     }
   }
 
-  // Show error message in a snackbar - moved to be accessible by all methods
-
   @override
   void initState() {
     super.initState();
@@ -1256,26 +1254,24 @@ class _WordQuizPageState extends State<WordQuizPage> {
   Future<void> handleSwipe(bool known) async {
     if (isFinished) return;
 
-    String wordKey = words[currentIndex].english;
+    final wordKey = words[currentIndex].english;
+    bool wasKnown = knownWords.contains(wordKey);
 
-    // Update known words set based on swipe direction
-    if (known) {
-      knownWords.add(wordKey);
-    } else {
-      knownWords.remove(wordKey);
-    }
-
-    final nextIndex = _findNextUnfamiliarIndex(currentIndex);
-
-    // Update UI immediately for instant response
     setState(() {
-      // Always update knownCount to reflect current knownWords size
-      knownCount = knownWords.length;
-      if (nextIndex != -1) {
-        currentIndex = nextIndex;
-        showChinese = false;
+      if (known) {
+        if (!wasKnown) knownCount++;
+        knownWords.add(wordKey);
       } else {
+        if (wasKnown) knownCount--;
+        knownWords.remove(wordKey);
+      }
+
+      showChinese = false;
+      currentIndex = _findNextUnfamiliarIndex(currentIndex);
+
+      if (currentIndex == -1) {
         isFinished = true;
+        currentIndex = words.length - 1; // Stay on the last card
       }
     });
 
@@ -1292,17 +1288,22 @@ class _WordQuizPageState extends State<WordQuizPage> {
   // Async method to save progress without blocking UI
   Future<void> _saveProgressAsync(bool known, String wordKey) async {
     try {
-      // Save to SharedPreferences
+      // 1. 非同步儲存進度到 SharedPreferences
       final prefs = await SharedPreferences.getInstance();
-      String key = 'known_${selectedLevel ?? ''}';
-      await prefs.setStringList(key, knownWords.toList());
+      final knownWordsList = knownWords.toList();
+      await prefs.setStringList('knownWords', knownWordsList);
 
-      // Cloud sync (fire and forget)
-      FirestoreSync.uploadKnownWords(knownWords.toList()).catchError((e) {
-        // Silently handle errors for offline fallback
+      // 2. 將更新後的進度上傳到 Firestore (fire and forget with error handling)
+      FirestoreSync.uploadKnownWords(knownWordsList).catchError((e) {
+        if (kDebugMode) {
+          print('Firestore sync failed: $e');
+        }
+        // Silently handle errors, allowing offline usage
       });
     } catch (e) {
-      // Handle any errors silently
+      if (kDebugMode) {
+        print('Error saving progress to SharedPreferences: $e');
+      }
     }
   }
 
@@ -2007,6 +2008,8 @@ class _QuizPageState extends State<QuizPage> {
             optionsList: optionsList,
             userAnswers: userAnswers,
             quizType: widget.type,
+            level: widget.level,
+            questionCount: widget.questionCount,
           ),
         ),
       );
@@ -2043,10 +2046,7 @@ class _QuizPageState extends State<QuizPage> {
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
-            onPressed: () {
-                      Navigator.of(context).pop(); // 關閉結果頁
-                      loadQuiz(); // 重新載入題目
-                    },
+            onPressed: loadQuiz,
             tooltip: '重新開始測驗',
           ),
         ],
@@ -2228,6 +2228,8 @@ class QuizResultsPage extends StatelessWidget {
   final List<List<Word>> optionsList;
   final List<int> userAnswers;
   final String quizType;
+  final String level;
+  final int questionCount;
 
   const QuizResultsPage({
     super.key,
@@ -2235,6 +2237,8 @@ class QuizResultsPage extends StatelessWidget {
     required this.optionsList,
     required this.userAnswers,
     required this.quizType,
+    required this.level,
+    required this.questionCount,
   });
 
   @override
@@ -2257,7 +2261,24 @@ class QuizResultsPage extends StatelessWidget {
         title: Text('測驗結果 - $score / ${quizWords.length}'),
         actions: [
           IconButton(
+            icon: const Icon(Icons.refresh),
+            tooltip: '重新測驗',
+            onPressed: () {
+              Navigator.pushReplacement(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => QuizPage(
+                    type: quizType,
+                    level: level,
+                    questionCount: questionCount,
+                  ),
+                ),
+              );
+            },
+          ),
+          IconButton(
             icon: const Icon(Icons.home),
+            tooltip: '返回主畫面',
             onPressed: () =>
                 Navigator.of(context).popUntil((route) => route.isFirst),
           ),
@@ -2669,85 +2690,6 @@ class _AllWordsPageState extends State<AllWordsPage> {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class WordCard extends StatefulWidget {
-  final String word;
-  const WordCard({super.key, required this.word});
-
-  @override
-  State<WordCard> createState() => _WordCardState();
-}
-
-class _WordCardState extends State<WordCard> {
-  bool _isPressed = false;
-  Timer? _longPressTimer;
-
-  @override
-  void dispose() {
-    _longPressTimer?.cancel();
-    super.dispose();
-  }
-
-  void _onTapDown(TapDownDetails details) {
-    if (mounted) {
-      setState(() => _isPressed = true);
-    }
-
-    _longPressTimer = Timer(const Duration(milliseconds: 500), () async {
-      if (!mounted) return;
-
-      // 1. 震動
-      await AppUtils.triggerHapticFeedback();
-
-      // 2. 開啟字典 WebView
-      try {
-        await Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) =>
-                DictionaryWebView(word: widget.word, isEnglishOnly: false),
-          ),
-        );
-      } catch (e) {
-        if (mounted) AppUtils.showErrorSnackBar(context, '開啟字典時發生錯誤: $e');
-      }
-    });
-  }
-
-  void _onTapUp(TapUpDetails details) {
-    _longPressTimer?.cancel();
-    if (mounted) {
-      setState(() => _isPressed = false);
-    }
-  }
-
-  void _onTapCancel() {
-    _longPressTimer?.cancel();
-    if (mounted) {
-      setState(() => _isPressed = false);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTapDown: _onTapDown,
-      onTapUp: _onTapUp,
-      onTapCancel: _onTapCancel,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 100),
-        transform:
-            _isPressed ? (Matrix4.identity()..scale(0.95)) : Matrix4.identity(),
-        child: Card(
-          child: Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Text(widget.word, style: const TextStyle(fontSize: 24)),
-          ),
-        ),
       ),
     );
   }

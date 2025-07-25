@@ -1,5 +1,6 @@
 import Flutter
 import UIKit
+import Firebase
 import GoogleSignIn
 
 @main
@@ -8,15 +9,10 @@ import GoogleSignIn
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
+    // Initialize Firebase
+    FirebaseApp.configure()
+    
     GeneratedPluginRegistrant.register(with: self)
-    
-    // Configure Google Sign-In
-    if let path = Bundle.main.path(forResource: "GoogleService-Info", ofType: "plist"),
-       let plist = NSDictionary(contentsOfFile: path),
-       let clientId = plist["CLIENT_ID"] as? String {
-      GIDSignIn.sharedInstance.configuration = GIDConfiguration(clientID: clientId)
-    }
-    
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
   
