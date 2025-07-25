@@ -1857,42 +1857,17 @@ class _QuizPageState extends State<QuizPage> {
   @override
   void initState() {
     super.initState();
-    _resetQuiz();
-  }
-
-  Future<void> _resetQuiz() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (BuildContext context) => AlertDialog(
-        title: const Text('確定要重新開始測驗嗎？'),
-        content: const Text('這將清除目前的測驗進度。'),
-        actions: <Widget>[
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('取消'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('確定'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed == true) {
-      if (mounted) {
-        setState(() {
-          _showAnswer = false;
-          _isAnswerCorrect = false;
-          _selectedIndex = null;
-          _showAllTranslations = false;
-        });
-        loadQuiz();
-      }
-    }
+    loadQuiz();
   }
 
   Future<void> loadQuiz() async {
+    // 顯示載入指示器
+    if (mounted) {
+      setState(() {
+        quizWords = []; // 清空舊題目以顯示載入畫面
+      });
+    }
+
     String data = await rootBundle.loadString('assets/words.json');
     List<dynamic> jsonResult = json.decode(data);
     allWords = jsonResult.map((item) => Word.fromJson(item)).toList();
@@ -1904,17 +1879,39 @@ class _QuizPageState extends State<QuizPage> {
       filteredWords = allWords.where((w) => w.level == widget.level).toList();
     }
 
-    // Only shuffle and take new questions if we're not restoring state
-    if (quizWords.isEmpty) {
-      filteredWords.shuffle();
-      final count = widget.questionCount > filteredWords.length
-          ? filteredWords.length
-          : widget.questionCount;
-      quizWords = filteredWords.take(count).toList();
+    // 檢查是否有足夠的單字出題
+    if (filteredWords.length < 4) {
+      if (mounted) {
+        // 延遲一幀以避免在 build 期間顯示 dialog
+        Future.microtask(() => showDialog(
+              context: context,
+              builder: (context) => AlertDialog(
+                title: const Text('單字不足'),
+                content: Text('"${widget.level}" 等級的單字少於4個，無法進行測驗。\n請先去學習更多單字！'),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    child: const Text('好的'),
+                  ),
+                ],
+              ),
+            )).then((_) {
+          // 關閉對話框後返回上一頁
+          if (mounted) Navigator.of(context).pop();
+        });
+      }
+      return;
     }
 
+    // 重新產生題目
+    filteredWords.shuffle();
+    final count = widget.questionCount > filteredWords.length
+        ? filteredWords.length
+        : widget.questionCount;
+    List<Word> newQuizWords = filteredWords.take(count).toList();
+
     // 預先產生每題的選項
-    optionsList = quizWords.map((answer) {
+    List<List<Word>> newOptionsList = newQuizWords.map((answer) {
       List<Word> options = [answer];
       List<Word> pool =
           allWords.where((w) => w.english != answer.english).toList();
@@ -1926,17 +1923,17 @@ class _QuizPageState extends State<QuizPage> {
       return options;
     }).toList();
 
-    // Initialize userAnswers if not already done
-    if (userAnswers.length != quizWords.length) {
-      userAnswers = List.filled(quizWords.length, -1);
-    }
-
+    // 載入完成後，更新狀態並刷新UI
     if (mounted) {
       setState(() {
         current = 0;
-        score = userAnswers
-            .where((ans) => ans != -1)
-            .length; // Count already answered questions
+        score = 0;
+        quizWords = newQuizWords;
+        optionsList = newOptionsList;
+        userAnswers = List.filled(quizWords.length, -1);
+        _showAnswer = false;
+        _isAnswerCorrect = false;
+        _selectedIndex = null;
       });
     }
   }
@@ -2046,7 +2043,10 @@ class _QuizPageState extends State<QuizPage> {
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
-            onPressed: _resetQuiz,
+            onPressed: () {
+                      Navigator.of(context).pop(); // 關閉結果頁
+                      loadQuiz(); // 重新載入題目
+                    },
             tooltip: '重新開始測驗',
           ),
         ],
