@@ -67,6 +67,7 @@ jobs:
 
       # 先乾淨處理 Pods 並重新安裝（避免殘留設定注入）
       - name: Reinstall CocoaPods (clean)
+        timeout-minutes: 20
         working-directory: ios
         run: |
           pod deintegrate
@@ -74,7 +75,7 @@ jobs:
           # Purge Xcode DerivedData and CocoaPods cache to avoid stale settings
           rm -rf ~/Library/Developer/Xcode/DerivedData
           pod cache clean --all
-          pod install --repo-update
+          pod install --clean-install
 
       # 在安裝完 Pods 之後，檢查是否仍有 -G 旗標殘留
       - name: Inspect flags for -G
@@ -88,6 +89,7 @@ jobs:
 
       # 建構 iOS（不簽章），並清空可能的旗標環境變數
       - name: Build iOS (no codesign)
+        timeout-minutes: 40
         env:
           CC: clang
           CXX: clang++
@@ -103,10 +105,7 @@ jobs:
           XCFLAGS: ''
         run: flutter build ios --release --no-codesign
 
-      # 更新 CocoaPods repo（保留，若上一步成功可視情況移除）
-      - name: Update Pods Repo
-        run: pod repo update
-        working-directory: ios
+      # 已移除 Repo Update，改用 CDN 與 clean-install，加速並避免卡住
 
       # 建立 Payload 目錄
       - name: Create Payload Directory
