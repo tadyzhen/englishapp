@@ -41,6 +41,8 @@ class _ModernLoginScreenState extends State<ModernLoginScreen> with TickerProvid
     _initializeGoogleSignIn();
   }
 
+  // 衝突解決改由 AuthWrapper 登入後統一處理，避免登入畫面與路由競態造成黑畫面
+
   void _initializeAnimations() {
     _fadeController = AnimationController(
       duration: const Duration(milliseconds: 1200),
@@ -76,8 +78,9 @@ class _ModernLoginScreenState extends State<ModernLoginScreen> with TickerProvid
     try {
       _googleSignIn = GoogleSignIn(
         scopes: ['email', 'profile'],
+        // Use the correct iOS client ID that matches Info.plist and GoogleService-Info.plist
         serverClientId: Platform.isIOS 
-            ? '390579676069-t5pppt4gnveqeirbrjj3qsamftp1vveu.apps.googleusercontent.com'
+            ? '390579676069-frmpgtodff68gtjbcfpqqe0mke71vq5l.apps.googleusercontent.com'
             : null,
       );
       
@@ -139,7 +142,12 @@ class _ModernLoginScreenState extends State<ModernLoginScreen> with TickerProvid
       
       if (mounted) {
         _showSuccessMessage('登入成功！歡迎回來');
-        await Future.delayed(const Duration(milliseconds: 800));
+        await Future.delayed(const Duration(milliseconds: 300));
+        // Mark fresh login so AuthWrapper can show cloud/local prompt exactly once
+        try {
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setBool('just_logged_in', true);
+        } catch (_) {}
         await widget.onLoginSuccess();
       }
     } on FirebaseAuthException catch (e) {
@@ -371,7 +379,12 @@ class _ModernLoginScreenState extends State<ModernLoginScreen> with TickerProvid
             _showSuccessMessage('Google 登入成功！歡迎回來');
           }
           
-          await Future.delayed(const Duration(milliseconds: 800));
+          await Future.delayed(const Duration(milliseconds: 300));
+          // Mark fresh login so AuthWrapper can show cloud/local prompt exactly once
+          try {
+            final prefs = await SharedPreferences.getInstance();
+            await prefs.setBool('just_logged_in', true);
+          } catch (_) {}
           await widget.onLoginSuccess();
         }
       }

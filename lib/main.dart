@@ -231,6 +231,7 @@ class AuthWrapper extends StatefulWidget {
 class _AuthWrapperState extends State<AuthWrapper> {
   bool _isLoading = true;
   String? _loginMethod;
+  String? _handledUid; // ensure we only prompt once per user per session
 
   @override
   void initState() {
@@ -276,12 +277,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
       );
     }
 
-    // Handle guest mode
-    if (_loginMethod == 'guest') {
-      return const MainNavigation();
-    }
-
-    // Handle authenticated users
+    // Handle authenticated users and guest mode via Firebase stream
     return StreamBuilder<User?>(
       stream: FirebaseAuth.instance.authStateChanges(),
       builder: (context, snapshot) {
@@ -294,32 +290,210 @@ class _AuthWrapperState extends State<AuthWrapper> {
           );
         }
 
-        // User is authenticated
+        // If Firebase user exists -> Main
         if (snapshot.hasData && snapshot.data != null) {
+          final user = snapshot.data!;
+          // After first frame, prompt cloud/local choice once per user if needed
+          if (_handledUid != user.uid) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              _promptCloudChoiceOnce(user.uid);
+            });
+          }
           return const MainNavigation();
         }
 
-        // Check if we have a valid login method but user is null (edge case)
-        if (_loginMethod == 'google' || _loginMethod == 'email') {
-          // Give Firebase a moment to update auth state
-          return const Scaffold(
-            body: Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  CircularProgressIndicator(),
-                  SizedBox(height: 16),
-                  Text('正在登入...'),
-                ],
-              ),
-            ),
-          );
+        // If guest mode flag set -> Main
+        if (_loginMethod == 'guest') {
+          return const MainNavigation();
         }
 
-        // User is not authenticated - show login screen
+        // Otherwise show login screen
         return ModernLoginScreen(onLoginSuccess: _refreshAuthState);
       },
     );
+  }
+
+  Future<void> _promptCloudChoiceOnce(String uid) async {
+    if (!mounted) return;
+    // avoid duplicate prompts per session per uid
+    if (_handledUid == uid) return;
+
+    try {
+      // Only prompt right after a fresh login
+      final prefs = await SharedPreferences.getInstance();
+      final justLoggedIn = prefs.getBool('just_logged_in') ?? false;
+      bool recentSignIn = false;
+      try {
+        final user = FirebaseAuth.instance.currentUser;
+        final last = user?.metadata.lastSignInTime;
+        if (last != null) {
+          final now = DateTime.now();
+          recentSignIn = now.difference(last).inSeconds <= 10;
+        }
+      } catch (_) {}
+      if (!justLoggedIn && !recentSignIn) {
+        return;
+      }
+
+      // Small delay to ensure current route is fully built
+      await Future.delayed(const Duration(milliseconds: 120));
+
+      // Fetch cloud data
+      final cloudKnown = await FirestoreSync.getKnownByLevel();
+      final cloudFavs = await FirestoreSync.getFavorites();
+      final bool cloudHasData =
+          cloudKnown.values.any((l) => l.isNotEmpty) || cloudFavs.isNotEmpty;
+
+      // Always prompt if cloud has any data
+      if (!mounted) return;
+      // Now mark this uid as handled to avoid duplicate prompts
+      _handledUid = uid;
+      String? choice;
+      try {
+        choice = await showDialog<String>(
+          context: context,
+          barrierDismissible: false,
+          useRootNavigator: true,
+          builder: (ctx) {
+            if (cloudHasData) {
+              return AlertDialog(
+                title: const Text('發現雲端紀錄'),
+                content: const Text('偵測到您的雲端已有學習紀錄，請選擇要使用雲端記錄或以本機覆蓋雲端。'),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.of(ctx).pop('useCloud'),
+                    child: const Text('使用雲端記錄'),
+                  ),
+                  FilledButton(
+                    onPressed: () => Navigator.of(ctx).pop('overwriteCloud'),
+                    child: const Text('覆蓋雲端記錄'),
+                  ),
+                ],
+              );
+            } else {
+              return AlertDialog(
+                title: const Text('雲端尚無紀錄'),
+                content: const Text('目前雲端還沒有您的學習紀錄，是否要將本機紀錄上傳到雲端？'),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.of(ctx).pop('skip'),
+                    child: const Text('稍後再說'),
+                  ),
+                  FilledButton(
+                    onPressed: () => Navigator.of(ctx).pop('overwriteCloud'),
+                    child: const Text('上傳到雲端'),
+                  ),
+                ],
+              );
+            }
+          },
+        );
+      } catch (_) {
+        // Fallback: try again once more after a short delay
+        if (!mounted) return;
+        await Future.delayed(const Duration(milliseconds: 150));
+        choice = await showDialog<String>(
+          context: context,
+          barrierDismissible: false,
+          useRootNavigator: true,
+          builder: (ctx) {
+            if (cloudHasData) {
+              return AlertDialog(
+                title: const Text('發現雲端紀錄'),
+                content: const Text('偵測到您的雲端已有學習紀錄，請選擇要使用雲端記錄或以本機覆蓋雲端。'),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.of(ctx).pop('useCloud'),
+                    child: const Text('使用雲端記錄'),
+                  ),
+                  FilledButton(
+                    onPressed: () => Navigator.of(ctx).pop('overwriteCloud'),
+                    child: const Text('覆蓋雲端記錄'),
+                  ),
+                ],
+              );
+            } else {
+              return AlertDialog(
+                title: const Text('雲端尚無紀錄'),
+                content: const Text('目前雲端還沒有您的學習紀錄，是否要將本機紀錄上傳到雲端？'),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.of(ctx).pop('skip'),
+                    child: const Text('稍後再說'),
+                  ),
+                  FilledButton(
+                    onPressed: () => Navigator.of(ctx).pop('overwriteCloud'),
+                    child: const Text('上傳到雲端'),
+                  ),
+                ],
+              );
+            }
+          },
+        );
+      }
+
+      if (choice == null) {
+        await prefs.setBool('just_logged_in', false);
+        return;
+      }
+
+      final levels = ['1','2','3','4','5','6'];
+
+      if (choice == 'useCloud') {
+        // Handle legacy mapping if needed
+        Map<String, List<String>> byLevel = Map.fromEntries(
+          cloudKnown.entries.where((e) => e.key != '_legacy'),
+        );
+        if (cloudKnown.containsKey('_legacy')) {
+          // Map legacy knownWords to levels by reading assets
+          try {
+            String data = await rootBundle.loadString('assets/words.json');
+            List<dynamic> jsonResult = json.decode(data);
+            final wordToLevel = <String, String>{};
+            for (var item in jsonResult) {
+              final w = Word.fromJson(item);
+              wordToLevel[w.english] = w.level;
+            }
+            final legacyList = cloudKnown['_legacy'] ?? <String>[];
+            final Map<String, List<String>> migrated = { for (var lv in levels) lv: <String>[] };
+            for (final eng in legacyList) {
+              final lv = wordToLevel[eng];
+              if (lv != null && migrated.containsKey(lv)) {
+                migrated[lv]!.add(eng);
+              }
+            }
+            // merge with existing byLevel
+            for (final lv in levels) {
+              final existing = byLevel[lv] ?? <String>[];
+              final merged = {...existing, ...migrated[lv]!}.toList();
+              byLevel[lv] = merged;
+            }
+          } catch (_) {}
+        }
+
+        // Write cloud data to local prefs
+        for (final lv in levels) {
+          await prefs.setStringList('known_$lv', byLevel[lv] ?? <String>[]);
+        }
+        await prefs.setStringList('favorite_words', cloudFavs);
+      } else if (choice == 'overwriteCloud') {
+        // Collect local data and upload to cloud
+        for (final lv in levels) {
+          final local = prefs.getStringList('known_$lv') ?? <String>[];
+          await FirestoreSync.uploadKnownWordsForLevel(lv, local);
+        }
+        final localFavs = prefs.getStringList('favorite_words') ?? <String>[];
+        await FirestoreSync.uploadFavorites(localFavs);
+      } else if (choice == 'skip') {
+        // do nothing, user chose to postpone; just reset the flag
+        await prefs.setBool('just_logged_in', false);
+        return;
+      }
+      // reset the flag after handling
+      await prefs.setBool('just_logged_in', false);
+    } catch (e) {
+      // Silent; do not block UI
+    }
   }
 }
 
@@ -339,7 +513,7 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
       context: context,
       builder: (BuildContext context) => AlertDialog(
         title: const Text('確定要重置所有進度嗎？'),
-        content: const Text('這將清除所有熟知記錄，且無法復原。'),
+        content: const Text('這將清除所有熟知記錄與收藏，且無法復原。'),
         actions: <Widget>[
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
@@ -361,6 +535,12 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
       for (var level in levels) {
         await prefs.remove('known_$level');
       }
+      // 同步清除收藏
+      await prefs.remove('favorite_words');
+      // 雲端同步（非阻塞）
+      try {
+        FirestoreSync.uploadFavorites([]).catchError((_) {});
+      } catch (_) {}
       if (mounted) {
         setState(() {
           isResetting = false;
@@ -376,7 +556,7 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
                 '已重置',
                 style: TextStyle(fontWeight: FontWeight.bold),
               ),
-              content: const Text('所有熟知記錄已重置'),
+              content: const Text('所有熟知記錄與收藏已重置'),
               actions: [
                 TextButton(
                   onPressed: () => Navigator.of(ctx).pop(),

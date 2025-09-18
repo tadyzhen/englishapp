@@ -45,7 +45,13 @@ class FirestoreSync {
     final data = doc.data() ?? {};
     final Map<String, dynamic> byLevel =
         Map<String, dynamic>.from(data['knownByLevel'] ?? {});
-    return byLevel.map((k, v) => MapEntry(k, List<String>.from(v ?? [])));
+    final result = byLevel.map((k, v) => MapEntry(k, List<String>.from(v ?? [])));
+
+    // Legacy support: if no knownByLevel but legacy knownWords exists, expose under '_legacy'
+    if (result.isEmpty && (data['knownWords'] is List) && (data['knownWords'] as List).isNotEmpty) {
+      result['_legacy'] = List<String>.from(data['knownWords'] as List);
+    }
+    return result;
   }
 
   // 取得收藏清單

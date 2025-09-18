@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 // Google Sign-In will be handled through Firebase Auth
+import 'package:google_sign_in/google_sign_in.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'modern_login_screen.dart';
 
@@ -9,20 +10,33 @@ class AccountScreen extends StatelessWidget {
 
   Future<void> _signOut(BuildContext context) async {
     try {
+      // Sign out from Firebase
       await FirebaseAuth.instance.signOut();
-      // Sign out from all providers
+
+      // Also sign out from Google provider if available
       try {
-        await FirebaseAuth.instance.signOut();
-      } catch (e) {
-        // Ignore any sign out errors
-      }
+        final google = GoogleSignIn();
+        await google.signOut();
+      } catch (_) {}
       
       final prefs = await SharedPreferences.getInstance();
       await prefs.remove('login_method');
-      
-      if (context.mounted) {
-        Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
-      }
+      await prefs.remove('is_guest');
+
+      if (!context.mounted) return;
+      // Reset navigation stack to login screen; AuthWrapper will also pick up auth change
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(
+          builder: (_) => ModernLoginScreen(
+            onLoginSuccess: () async {
+              if (context.mounted) {
+                Navigator.of(context).pop();
+              }
+            },
+          ),
+        ),
+        (route) => false,
+      );
     } catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
