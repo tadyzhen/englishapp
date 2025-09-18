@@ -395,13 +395,23 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
 
   Future<void> loadFavoriteWords() async {
     final prefs = await SharedPreferences.getInstance();
-    final favs = prefs.getStringList('favorite_words') ?? [];
+    // 1) 先拿本機收藏
+    final localFavs = prefs.getStringList('favorite_words') ?? [];
+    List<String> mergedFavs = List.from(localFavs);
+    try {
+      // 2) 從雲端抓收藏，若有資料與本機合併並回寫本機
+      final cloudFavs = await FirestoreSync.getFavorites();
+      if (cloudFavs.isNotEmpty) {
+        mergedFavs = {...localFavs, ...cloudFavs}.toList();
+        await prefs.setStringList('favorite_words', mergedFavs);
+      }
+    } catch (_) {}
+
     String data = await rootBundle.loadString('assets/words.json');
     List<dynamic> jsonResult = json.decode(data);
-    List<Word> allWords =
-        jsonResult.map((item) => Word.fromJson(item)).toList();
+    List<Word> allWords = jsonResult.map((item) => Word.fromJson(item)).toList();
     setState(() {
-      favoriteWords = allWords.where((w) => favs.contains(w.english)).toList();
+      favoriteWords = allWords.where((w) => mergedFavs.contains(w.english)).toList();
     });
   }
 
@@ -1192,7 +1202,25 @@ class _WordQuizPageState extends State<WordQuizPage> {
     final prefs = await SharedPreferences.getInstance();
     String level = widget.initialLevel ?? temp.keys.first;
     List<Word> wordList = List<Word>.from(temp[level] ?? []);
-    Set<String> known = prefs.getStringList('known_$level')?.toSet() ?? {};
+    // 1) 先從本機載入
+    Set<String> known = {};
+    try {
+      final prefKnown = prefs.getStringList('known_$level');
+      if (prefKnown != null) {
+        known = prefKnown.toSet();
+      }
+    } catch (_) {}
+    // 2) 再從雲端拉使用者進度（若雲端有資料則優先使用，並回寫本機）
+    try {
+      final byLevel = await FirestoreSync.getKnownByLevel();
+      final cloud = byLevel[level] ?? [];
+      if (cloud.isNotEmpty) {
+        // 以雲端為主，並與本機合併避免遺失（取聯集）
+        known = {...known, ...cloud}.toSet();
+        // 回寫本機，以利離線使用
+        await prefs.setStringList('known_$level', known.toList());
+      }
+    } catch (_) {}
     Set<String> favs = prefs.getStringList('favorite_words')?.toSet() ?? {};
 
     int firstUnfamiliar = -1;
@@ -1291,9 +1319,18 @@ class _WordQuizPageState extends State<WordQuizPage> {
       await prefs.setStringList(key, knownWords.toList());
 
       // Cloud sync (fire and forget)
-      FirestoreSync.uploadKnownWords(knownWords.toList()).catchError((e) {
-        // Silently handle errors for offline fallback
-      });
+      if (selectedLevel != null && selectedLevel!.isNotEmpty) {
+        FirestoreSync
+                .uploadKnownWordsForLevel(selectedLevel!, knownWords.toList())
+            .catchError((e) {
+          // Silently handle errors for offline fallback
+        });
+      } else {
+        // Fallback to legacy field if level not determined
+        FirestoreSync.uploadKnownWords(knownWords.toList()).catchError((e) {
+          // Silently handle errors for offline fallback
+        });
+      }
     } catch (e) {
       // Handle any errors silently
     }
