@@ -64,6 +64,27 @@ post_install do |installer|
     target.build_configurations.each { |config| sanitize_build_config(config) }
   end
 
+  # Additionally remove any per-file COMPILER_FLAGS that contain tokens starting with '-G'
+  # e.g., strings like "-GCC_WARN_INHIBIT_ALL_WARNINGS" found in PBXBuildFile settings.
+  installer.pods_project.targets.each do |target|
+    target.build_phases.each do |phase|
+      # Only phases that may have per-file compiler flags
+      next unless phase.respond_to?(:files)
+      phase.files.each do |build_file|
+        settings = build_file.settings
+        next unless settings.is_a?(Hash)
+        flags = settings['COMPILER_FLAGS']
+        next unless flags.is_a?(String) && flags.include?('-G')
+        tokens = flags.split(' ')
+        sanitized = tokens.reject { |t| t == '-G' || t.start_with?('-G') }
+        if sanitized.join(' ') != flags
+          settings['COMPILER_FLAGS'] = sanitized.join(' ')
+          build_file.settings = settings
+        end
+      end
+    end
+  end
+
   # Also sanitize user project targets (e.g., Runner and test targets)
   user_projects = installer.aggregate_targets.map(&:user_project).uniq.compact
   user_projects.each do |project|
