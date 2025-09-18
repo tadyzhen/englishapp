@@ -51,10 +51,8 @@ post_install do |installer|
         sanitized = value.flatten.compact.map(&:to_s).reject { |t| t == '-G' || t.start_with?('-G') }
         config.build_settings[key] = sanitized
       elsif value.is_a?(String)
-        # Split by whitespace to operate on tokens
         tokens = value.split(' ')
         sanitized = tokens.reject { |t| t == '-G' || t.start_with?('-G') }
-        # Preserve original type: if it was a string, join back with a single space
         config.build_settings[key] = sanitized.join(' ')
       end
     end
@@ -73,5 +71,27 @@ post_install do |installer|
       t.build_configurations.each { |config| sanitize_build_config(config) }
     end
     project.save
+  end
+
+  # Persist changes to the Pods project as well
+  installer.pods_project.save
+
+  # Additionally sanitize any generated xcconfig files in Target Support Files to remove '-G*' tokens
+  target_support_dir = File.join(__dir__, 'Pods', 'Target Support Files')
+  if Dir.exist?(target_support_dir)
+    Dir.glob(File.join(target_support_dir, '**', '*.xcconfig')).each do |xcconfig_path|
+      begin
+        content = File.read(xcconfig_path)
+        # Remove any occurrences of tokens that start with -G (e.g., ' -G', ' -Gfoo') while preserving surrounding spaces
+        sanitized = content.gsub(/(?<=\s)-G\S*/, '')
+        # Also handle line-start occurrences
+        sanitized = sanitized.gsub(/^\s*-G\S*\s*/, '')
+        if sanitized != content
+          File.open(xcconfig_path, 'w') { |f| f.write(sanitized) }
+        end
+      rescue => e
+        puts "Warning: Failed to sanitize #{xcconfig_path}: #{e}"
+      end
+    end
   end
 end
