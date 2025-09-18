@@ -37,26 +37,41 @@ target 'Runner' do
 end
 
 post_install do |installer|
-  installer.pods_project.targets.each do |target|
-    flutter_additional_ios_build_settings(target)
+  # Helper to sanitize a single build configuration
+  def sanitize_build_config(config)
+    # Enforce minimum iOS version 13 to align with platform :ios, '13.0'
+    config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '13.0'
 
-    target.build_configurations.each do |config|
-      # Ensure all pods build with at least iOS 13.0 to match the project and silence warnings
-      config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '13.0'
+    # For every build setting key, if it's String/Array, strip any token that equals '-G' or starts with '-G'
+    config.build_settings.keys.each do |key|
+      value = config.build_settings[key]
+      next if value.nil?
 
-      # Remove unsupported '-G' flags across compiler/linker settings if any pod injected them
-      %w[OTHER_CFLAGS OTHER_CPLUSPLUSFLAGS OTHER_LDFLAGS OTHER_LINKER_FLAGS CFLAGS CPLUSPLUSFLAGS].each do |flags_key|
-        flags_value = config.build_settings[flags_key]
-        next if flags_value.nil?
-
-        normalized = if flags_value.is_a?(Array)
-          flags_value.flatten.compact.map(&:to_s)
-        else
-          flags_value.to_s.split(' ')
-        end
-        sanitized = normalized.reject { |f| f == '-G' || f.start_with?('-G') }
-        config.build_settings[flags_key] = sanitized
+      if value.is_a?(Array)
+        sanitized = value.flatten.compact.map(&:to_s).reject { |t| t == '-G' || t.start_with?('-G') }
+        config.build_settings[key] = sanitized
+      elsif value.is_a?(String)
+        # Split by whitespace to operate on tokens
+        tokens = value.split(' ')
+        sanitized = tokens.reject { |t| t == '-G' || t.start_with?('-G') }
+        # Preserve original type: if it was a string, join back with a single space
+        config.build_settings[key] = sanitized.join(' ')
       end
     end
+  end
+
+  # Sanitize all Pods project targets
+  installer.pods_project.targets.each do |target|
+    flutter_additional_ios_build_settings(target)
+    target.build_configurations.each { |config| sanitize_build_config(config) }
+  end
+
+  # Also sanitize user project targets (e.g., Runner and test targets)
+  user_projects = installer.aggregate_targets.map(&:user_project).uniq.compact
+  user_projects.each do |project|
+    project.targets.each do |t|
+      t.build_configurations.each { |config| sanitize_build_config(config) }
+    end
+    project.save
   end
 end
