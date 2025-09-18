@@ -44,12 +44,16 @@ post_install do |installer|
       # Ensure all pods build with at least iOS 13.0 to match the project and silence warnings
       config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '13.0'
 
-      # Remove unsupported '-G' flags if any pod injected them
-      %w[OTHER_CFLAGS OTHER_CPLUSPLUSFLAGS].each do |flags_key|
+      # Remove unsupported '-G' flags across compiler/linker settings if any pod injected them
+      %w[OTHER_CFLAGS OTHER_CPLUSPLUSFLAGS OTHER_LDFLAGS OTHER_LINKER_FLAGS CFLAGS CPLUSPLUSFLAGS].each do |flags_key|
         flags_value = config.build_settings[flags_key]
         next if flags_value.nil?
 
-        normalized = flags_value.is_a?(Array) ? flags_value : flags_value.to_s.split(' ')
+        normalized = if flags_value.is_a?(Array)
+          flags_value.flatten.compact.map(&:to_s)
+        else
+          flags_value.to_s.split(' ')
+        end
         sanitized = normalized.reject { |f| f == '-G' || f.start_with?('-G') }
         config.build_settings[flags_key] = sanitized
       end
