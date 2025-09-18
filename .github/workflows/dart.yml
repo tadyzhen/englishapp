@@ -25,10 +25,32 @@ jobs:
       - name: Flutter doctor
         run: flutter doctor
 
-      # 鎖定使用 Xcode 15.4（避免 Xcode 16 與當前 Flutter 版本不相容）
-      - name: Select Xcode 15.4
+      # 選擇可用的 Xcode 15.x（避免 Xcode 16 與當前 Flutter 版本不相容）
+      - name: Select Xcode 15.x
         run: |
-          sudo xcode-select -switch /Applications/Xcode_15.4.app
+          set -e
+          echo "Available Xcodes in /Applications:"
+          ls -1 /Applications | sed 's/^/  - /'
+          CANDIDATES=(
+            "/Applications/Xcode_15.4.app"
+            "/Applications/Xcode_15.3.app"
+            "/Applications/Xcode_15.2.app"
+            "/Applications/Xcode_15.1.app"
+            "/Applications/Xcode_15.0.1.app"
+            "/Applications/Xcode_15.app"
+          )
+          SELECTED=""
+          for x in "${CANDIDATES[@]}"; do
+            if [ -d "$x" ]; then
+              echo "Selecting $x"
+              sudo xcode-select -switch "$x"
+              SELECTED="$x"
+              break
+            fi
+          done
+          if [ -z "$SELECTED" ]; then
+            echo "No pinned Xcode 15.x found; using current Xcode."
+          fi
           xcodebuild -version
 
       # 清理專案，避免快取問題
