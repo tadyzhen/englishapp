@@ -5,7 +5,7 @@ on:
 
 jobs:
   build:
-    runs-on: macos-latest
+    runs-on: macos-13
 
     steps:
       # 拉專案原始碼（支援 submodules）
@@ -24,6 +24,12 @@ jobs:
       # 檢查 Flutter 安裝成功
       - name: Flutter doctor
         run: flutter doctor
+
+      # 鎖定使用 Xcode 15.4（避免 Xcode 16 與當前 Flutter 版本不相容）
+      - name: Select Xcode 15.4
+        run: |
+          sudo xcode-select -switch /Applications/Xcode_15.4.app
+          xcodebuild -version
 
       # 清理專案，避免快取問題
       - name: Clean Flutter project
