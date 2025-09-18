@@ -43,11 +43,26 @@ jobs:
         run: |
           pod deintegrate
           rm -rf Pods Podfile.lock
+          # Purge Xcode DerivedData and CocoaPods cache to avoid stale settings
+          rm -rf ~/Library/Developer/Xcode/DerivedData
+          pod cache clean --all
           pod install --repo-update
+
+      # 在安裝完 Pods 之後，檢查是否仍有 -G 旗標殘留
+      - name: Inspect flags for -G
+        run: |
+          echo "Environment flags:"
+          env | egrep 'CFLAGS|CXXFLAGS|CPPFLAGS|LDFLAGS|SWIFT|OTHER_' || true
+          echo "\nSearching for -G in iOS project:"
+          grep -R --line-number " -G" ios/Pods || true
+          grep -R --line-number " -G" ios/Runner.xcodeproj || true
+          grep -R --line-number " -G" ios || true
 
       # 建構 iOS（不簽章），並清空可能的旗標環境變數
       - name: Build iOS (no codesign)
         env:
+          CC: clang
+          CXX: clang++
           CFLAGS: ''
           CXXFLAGS: ''
           CPPFLAGS: ''
@@ -56,6 +71,8 @@ jobs:
           OTHER_CPLUSPLUSFLAGS: ''
           OTHER_LDFLAGS: ''
           OTHER_LINKER_FLAGS: ''
+          OTHER_SWIFT_FLAGS: ''
+          XCFLAGS: ''
         run: flutter build ios --release --no-codesign
 
       # 更新 CocoaPods repo（保留，若上一步成功可視情況移除）
