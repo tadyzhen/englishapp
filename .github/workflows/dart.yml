@@ -37,11 +37,28 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
-      # 建構 iOS（不簽章）
+      # 先乾淨處理 Pods 並重新安裝（避免殘留設定注入）
+      - name: Reinstall CocoaPods (clean)
+        working-directory: ios
+        run: |
+          pod deintegrate
+          rm -rf Pods Podfile.lock
+          pod install --repo-update
+
+      # 建構 iOS（不簽章），並清空可能的旗標環境變數
       - name: Build iOS (no codesign)
+        env:
+          CFLAGS: ''
+          CXXFLAGS: ''
+          CPPFLAGS: ''
+          LDFLAGS: ''
+          OTHER_CFLAGS: ''
+          OTHER_CPLUSPLUSFLAGS: ''
+          OTHER_LDFLAGS: ''
+          OTHER_LINKER_FLAGS: ''
         run: flutter build ios --release --no-codesign
 
-      # 更新 CocoaPods repo
+      # 更新 CocoaPods repo（保留，若上一步成功可視情況移除）
       - name: Update Pods Repo
         run: pod repo update
         working-directory: ios
