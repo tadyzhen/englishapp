@@ -1775,7 +1775,7 @@ class _WordQuizPageState extends State<WordQuizPage> {
                 ),
                 const SizedBox(height: 10),
                 Text(
-                  '$knownCount / ${words.length}  (${(progress * 100).toStringAsFixed(1)}%)',
+                  '$knownCount / ${words.length}',
                   style: const TextStyle(
                     fontSize: 18,
                     color: Color(0xFF222222),
