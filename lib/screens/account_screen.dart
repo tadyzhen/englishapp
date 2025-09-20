@@ -4,6 +4,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'modern_login_screen.dart';
+import '../main.dart' show SettingsDialog;
 
 class AccountScreen extends StatelessWidget {
   const AccountScreen({Key? key}) : super(key: key);
@@ -116,7 +117,10 @@ class AccountScreen extends StatelessWidget {
             title: const Text('應用程式設定'),
             trailing: const Icon(Icons.arrow_forward_ios, size: 16),
             onTap: () {
-              // TODO: Navigate to settings
+              showDialog(
+                context: context,
+                builder: (ctx) => const SettingsDialog(),
+              );
             },
           ),
           const Divider(),

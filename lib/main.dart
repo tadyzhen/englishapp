@@ -507,6 +507,54 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
   final List<String> levels = ['1', '2', '3', '4', '5', '6'];
   bool isResetting = false;
   List<Word> favoriteWords = [];
+  // Progress states
+  Map<String, int> _levelTotals = {};
+  Map<String, int> _levelKnowns = {};
+  int _totalKnown = 0;
+  int _totalWords = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _computeProgress();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Recompute when this page becomes active again
+    _computeProgress();
+  }
+
+  Future<void> _computeProgress() async {
+    // Load all words from asset and compute totals per level
+    String data = await rootBundle.loadString('assets/words.json');
+    List<dynamic> jsonResult = json.decode(data);
+    final allWords = jsonResult.map((item) => Word.fromJson(item)).toList();
+    final totals = <String, int>{}..addEntries(levels.map((l) => MapEntry(l, 0)));
+    for (final w in allWords) {
+      if (totals.containsKey(w.level)) {
+        totals[w.level] = (totals[w.level] ?? 0) + 1;
+      }
+    }
+    final prefs = await SharedPreferences.getInstance();
+    final knowns = <String, int>{};
+    int totalKnown = 0;
+    int totalWords = 0;
+    for (final lv in levels) {
+      final knownList = prefs.getStringList('known_$lv') ?? <String>[];
+      knowns[lv] = knownList.length;
+      totalKnown += knownList.length;
+      totalWords += totals[lv] ?? 0;
+    }
+    if (!mounted) return;
+    setState(() {
+      _levelTotals = totals;
+      _levelKnowns = knowns;
+      _totalKnown = totalKnown;
+      _totalWords = totalWords;
+    });
+  }
 
   Future<void> resetAllProgress() async {
     final confirmed = await showDialog<bool>(
@@ -545,6 +593,8 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
         setState(() {
           isResetting = false;
         });
+        // Recompute progress after reset
+        _computeProgress();
         if (mounted) {
           showDialog(
             context: context,
@@ -599,68 +649,9 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
     showDialog(context: context, builder: (ctx) => const SettingsDialog());
   }
 
-  Future<void> _showLevelOptionsDialog(
-    String level, {
-    required bool hasProgress,
-  }) async {
-    final words = await _loadWordsForLevel(level);
-    if (!mounted) return;
+  // (removed) _showLevelOptionsDialog: 已改為直接點等級進入 A–Z 子集合
 
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text('等級 $level'),
-        content: const Text('請選擇一個選項'),
-        actions: [
-          TextButton(
-            child: const Text('選擇單字'),
-            onPressed: () {
-              Navigator.of(ctx).pop();
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => WordListPage(level: level, words: words),
-                ),
-              );
-            },
-          ),
-          TextButton(
-            child: Text(hasProgress ? '繼續' : '開始'),
-            onPressed: () {
-              Navigator.of(ctx).pop();
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => WordQuizPage(initialLevel: level),
-                ),
-              );
-            },
-          ),
-        ],
-      ),
-    );
-  }
-
-  // 取得指定等級的單字數量
-  Future<int> _getWordCountForLevel(String level) async {
-    try {
-      String data = await rootBundle.loadString('assets/words.json');
-      List<dynamic> jsonResult = json.decode(data);
-      List<Word> words = jsonResult.map((item) => Word.fromJson(item)).toList();
-
-      if (level == '全部') {
-        return words.length;
-      }
-      return words.where((word) => word.level == level).length;
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('載入單字時發生錯誤: $e')));
-      }
-      return 10; // Default to 10 questions if there's an error
-    }
-  }
+  // （已移除）_getWordCountForLevel：測驗頁面自帶計數函式
 
   Future<void> _launchURL(String word) async {
     // Always use the part before "/" for dictionary lookup
@@ -677,192 +668,7 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
     }
   }
 
-  Future<void> _showQuizOptions() async {
-    final quizLevels = ['1', '2', '3', '4', '5', '6', '全部'];
-    String? selectedLevel = '全部';
-    int questionCount = 10;
-    int maxQuestions = 10;
-    String quizType = 'ch2en';
-    final TextEditingController countController = TextEditingController(
-      text: '10',
-    );
-
-    await showDialog(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (context, setState) {
-          return AlertDialog(
-            title: const Text('測驗設定'),
-            content: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // 測驗等級選擇
-                  const Text(
-                    '1. 選擇測驗等級',
-                    style: TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 8),
-                  Wrap(
-                    spacing: 8.0,
-                    children: quizLevels.map((level) {
-                      final isSelected = selectedLevel == level;
-                      return FilterChip(
-                        label: Text('等級 $level'),
-                        selected: isSelected,
-                        onSelected: (selected) async {
-                          if (selected) {
-                            selectedLevel = level;
-                            // 更新最大題數
-                            maxQuestions = await _getWordCountForLevel(level);
-                            if (questionCount > maxQuestions) {
-                              questionCount = maxQuestions;
-                              countController.text = questionCount.toString();
-                            }
-                            setState(() {});
-                          }
-                        },
-                      );
-                    }).toList(),
-                  ),
-                  const SizedBox(height: 16),
-
-                  // 題數選擇
-                  const Text(
-                    '2. 選擇測驗題數',
-                    style: TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: countController,
-                          keyboardType: TextInputType.number,
-                          textInputAction: TextInputAction.done,
-                          onSubmitted: (_) {
-                            // Handle Enter key press
-                            final count =
-                                int.tryParse(countController.text) ?? 0;
-                            if (count > 0 && count <= maxQuestions) {
-                              questionCount = count;
-                              Navigator.of(context).pop({
-                                'level': selectedLevel,
-                                'count': questionCount,
-                                'type': quizType,
-                              });
-                            }
-                          },
-                          decoration: InputDecoration(
-                            labelText: '題數 (1-$maxQuestions)',
-                            border: const OutlineInputBorder(),
-                            hintText: '輸入後按 Enter 確認',
-                            contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 8,
-                            ),
-                          ),
-                          onChanged: (value) {
-                            final count = int.tryParse(value) ?? 0;
-                            if (count > 0 && count <= maxQuestions) {
-                              questionCount = count;
-                            }
-                          },
-                        ),
-                      ),
-                      const SizedBox(width: 16),
-                      Text('最多: $maxQuestions 題'),
-                    ],
-                  ),
-                  Slider(
-                    value: questionCount.toDouble(),
-                    min: 1,
-                    max: maxQuestions.toDouble(),
-                    divisions: maxQuestions - 1,
-                    label: questionCount.toString(),
-                    onChanged: (value) {
-                      questionCount = value.toInt();
-                      countController.text = questionCount.toString();
-                      setState(() {});
-                    },
-                  ),
-                  const SizedBox(height: 16),
-
-                  // 測驗模式選擇
-                  const Text(
-                    '3. 選擇測驗模式',
-                    style: TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 8),
-                  Column(
-                    children: [
-                      RadioListTile<String>(
-                        title: const Text('題目顯示中文（選英文）'),
-                        value: 'ch2en',
-                        groupValue: quizType,
-                        onChanged: (value) {
-                          quizType = value!;
-                          setState(() {});
-                        },
-                      ),
-                      RadioListTile<String>(
-                        title: const Text('題目顯示英文（選中文）'),
-                        value: 'en2ch',
-                        groupValue: quizType,
-                        onChanged: (value) {
-                          quizType = value!;
-                          setState(() {});
-                        },
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(ctx),
-                child: const Text('取消'),
-              ),
-              ElevatedButton(
-                onPressed: () {
-                  if (selectedLevel != null) {
-                    Navigator.pop(ctx, {
-                      'level': selectedLevel,
-                      'count': questionCount,
-                      'type': quizType,
-                    });
-                  }
-                },
-                child: const Text('開始測驗'),
-              ),
-            ],
-          );
-        },
-      ),
-    ).then((result) async {
-      if (result != null) {
-        final level = result['level'] as String;
-        final count = result['count'] as int;
-        final type = result['type'] as String;
-
-        // 檢查題數是否有效
-        final wordCount = await _getWordCountForLevel(level);
-        final finalCount = count > wordCount ? wordCount : count;
-
-        if (!mounted) return;
-
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) =>
-                QuizPage(type: type, level: level, questionCount: finalCount),
-          ),
-        );
-      }
-    });
-  }
+  // (removed) _showQuizOptions: 測驗設定已移至 QuizOptionsPage 分頁
 
   Future<List<Word>> _loadWordsForLevel(String level) async {
     String data = await rootBundle.loadString('assets/words.json');
@@ -906,11 +712,6 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
             },
           ),
           IconButton(
-            icon: const Icon(Icons.settings),
-            tooltip: '設定',
-            onPressed: showSettingsDialog,
-          ),
-          IconButton(
             icon: const Icon(Icons.refresh),
             tooltip: '重置記錄',
             onPressed: isResetting ? null : resetAllProgress,
@@ -922,22 +723,23 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            SizedBox(
-              width: 300,
-              child: ElevatedButton.icon(
-                icon: const Icon(Icons.quiz),
-                label: const Text('測驗'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Theme.of(context).colorScheme.primary,
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(18),
+            // 總進度（標題下方長條進度）
+            Builder(builder: (context) {
+              final total = _totalWords;
+              final known = _totalKnown;
+              final progress = total == 0 ? 0.0 : (known / total);
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('目前單字總進度：$known / $total (${(progress * 100).toStringAsFixed(1)}%)'),
+                  const SizedBox(height: 8),
+                  LinearProgressIndicator(
+                    value: progress,
+                    minHeight: 10,
                   ),
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                ),
-                onPressed: _showQuizOptions,
-              ),
-            ),
+                ],
+              );
+            }),
             const SizedBox(height: 24),
             Expanded(
               child: GridView.builder(
@@ -952,11 +754,13 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
                   final level = levels[idx];
                   return GestureDetector(
                     onTap: () async {
-                      final prefs = await SharedPreferences.getInstance();
-                      final knownWords =
-                          prefs.getStringList('known_$level') ?? [];
-                      final hasProgress = knownWords.isNotEmpty;
-                      _showLevelOptionsDialog(level, hasProgress: hasProgress);
+                      final words = await _loadWordsForLevel(level);
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => AlphabetGroupsPage(level: level, words: words),
+                        ),
+                      ).then((_) => _computeProgress());
                     },
                     child: AnimatedContainer(
                       duration: const Duration(milliseconds: 200),
@@ -981,22 +785,45 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
                         ),
                       ),
                       child: Center(
-                        child: FittedBox(
-                          fit: BoxFit.scaleDown,
-                          child: Text(
-                            '等級 $level',
-                            style: TextStyle(
-                              fontSize: 28,
-                              fontWeight: FontWeight.w600,
-                              color: Theme.of(context).brightness ==
-                                      Brightness.dark
-                                  ? Colors.white
-                                  : (Theme.of(
-                                        context,
-                                      ).textTheme.bodyLarge?.color ??
-                                      const Color(0xFF222222)),
-                              letterSpacing: 1.2,
-                            ),
+                        child: Padding(
+                          padding: const EdgeInsets.all(16.0),
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              FittedBox(
+                                fit: BoxFit.scaleDown,
+                                child: Text(
+                                  '等級 $level',
+                                  style: TextStyle(
+                                    fontSize: 28,
+                                    fontWeight: FontWeight.w600,
+                                    color: Theme.of(context).brightness ==
+                                            Brightness.dark
+                                        ? Colors.white
+                                        : (Theme.of(context)
+                                                .textTheme
+                                                .bodyLarge
+                                                ?.color ??
+                                            const Color(0xFF222222)),
+                                    letterSpacing: 1.2,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 12),
+                              Builder(builder: (context) {
+                                final total = _levelTotals[level] ?? 0;
+                                final known = _levelKnowns[level] ?? 0;
+                                final progress = total == 0 ? 0.0 : known / total;
+                                return Column(
+                                  children: [
+                                    LinearProgressIndicator(value: progress, minHeight: 8),
+                                    const SizedBox(height: 6),
+                                    Text('$known / $total (${(progress * 100).toStringAsFixed(0)}%)',
+                                        style: Theme.of(context).textTheme.bodySmall),
+                                  ],
+                                );
+                              }),
+                            ],
                           ),
                         ),
                       ),
@@ -1009,6 +836,305 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
         ),
       ),
     );
+  }
+}
+
+// A–Z 子集合頁面：點等級後先列表
+class AlphabetGroupsPage extends StatelessWidget {
+  final String level;
+  final List<Word> words;
+  const AlphabetGroupsPage({super.key, required this.level, required this.words});
+
+  Map<String, List<Word>> _groupByAlphabet(List<Word> words) {
+    final map = <String, List<Word>>{};
+    for (final w in words) {
+      final first = (w.english.split('/').first.trim());
+      if (first.isEmpty) continue;
+      final letter = first[0].toUpperCase();
+      if (!RegExp(r'^[A-Z]').hasMatch(letter)) {
+        // 非英文字母開頭歸類到 '#'
+        map.putIfAbsent('#', () => []).add(w);
+      } else {
+        map.putIfAbsent(letter, () => []).add(w);
+      }
+    }
+    // 排序每組
+    for (final k in map.keys) {
+      map[k]!.sort((a, b) => a.english.toLowerCase().compareTo(b.english.toLowerCase()));
+    }
+    return map;
+  }
+
+  Future<Set<String>> _loadKnownSet() async {
+    final prefs = await SharedPreferences.getInstance();
+    return (prefs.getStringList('known_$level') ?? <String>[]).toSet();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final grouped = _groupByAlphabet(words);
+    final letters = grouped.keys.toList()..sort();
+    return FutureBuilder<Set<String>>(
+      future: _loadKnownSet(),
+      builder: (context, snapshot) {
+        final knownSet = snapshot.data ?? {};
+        return Scaffold(
+          appBar: AppBar(title: Text('等級 $level - A–Z 子集合')),
+          body: ListView.separated(
+            itemCount: letters.length,
+            separatorBuilder: (_, __) => const Divider(height: 1),
+            itemBuilder: (context, index) {
+              final letter = letters[index];
+              final list = grouped[letter]!;
+              final total = list.length;
+              final known = list.where((w) => knownSet.contains(w.english)).length;
+              final progress = total == 0 ? 0.0 : known / total;
+              return ListTile(
+                title: Text('$letter 組'),
+                subtitle: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const SizedBox(height: 4),
+                    LinearProgressIndicator(value: progress, minHeight: 6),
+                    const SizedBox(height: 4),
+                    Text('$known / $total (${(progress * 100).toStringAsFixed(0)}%)'),
+                  ],
+                ),
+                trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => WordListPage(level: level, words: list, groupOrder: letters, currentLetter: letter),
+                    ),
+                  );
+                },
+              );
+            },
+          ),
+        );
+      },
+    );
+  }
+}
+
+// 測驗頁籤對應的設定頁面（將測驗設定從主頁移到此處）
+class QuizOptionsPage extends StatefulWidget {
+  const QuizOptionsPage({super.key});
+  @override
+  State<QuizOptionsPage> createState() => _QuizOptionsPageState();
+}
+
+class _QuizOptionsPageState extends State<QuizOptionsPage> {
+  final List<String> quizLevels = ['1', '2', '3', '4', '5', '6', '全部'];
+  String? selectedLevel = '全部';
+  int questionCount = 10;
+  int maxQuestions = 10;
+  String quizType = 'ch2en';
+  final TextEditingController countController = TextEditingController(text: '10');
+  List<String> letters = [];
+  String? selectedLetter;
+
+  @override
+  void initState() {
+    super.initState();
+    _updateMaxQuestions();
+  }
+
+  Future<void> _updateMaxQuestions() async {
+    if (!mounted) return;
+    final count = await _getWordCountForLevel(selectedLevel ?? '全部');
+    if (!mounted) return;
+    setState(() {
+      maxQuestions = count;
+      if (questionCount > maxQuestions) {
+        questionCount = maxQuestions;
+        countController.text = questionCount.toString();
+      }
+    });
+  }
+
+  Future<int> _getWordCountForLevel(String level) async {
+    try {
+      String data = await rootBundle.loadString('assets/words.json');
+      List<dynamic> jsonResult = json.decode(data);
+      List<Word> words = jsonResult.map((item) => Word.fromJson(item)).toList();
+      if (level == '全部') return words.length;
+      return words.where((w) => w.level == level).length;
+    } catch (_) {
+      return 10;
+    }
+  }
+
+  void _startQuiz() async {
+    final level = selectedLevel ?? '全部';
+    // Build the subset and use its size as the question count
+    String data = await rootBundle.loadString('assets/words.json');
+    List<dynamic> jsonResult = json.decode(data);
+    List<Word> all = jsonResult.map((item) => Word.fromJson(item)).toList();
+    List<Word> filtered = level == '全部' ? all : all.where((w) => w.level == level).toList();
+    List<Word> subset;
+    if (selectedLetter != null && selectedLetter!.isNotEmpty) {
+      final l = selectedLetter!.toUpperCase();
+      subset = filtered
+          .where((w) => (w.english.split('/').first.trim()).toUpperCase().startsWith(l))
+          .toList();
+    } else {
+      subset = filtered;
+    }
+    if (!mounted) return;
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => QuizPage(
+          type: quizType,
+          level: level,
+          questionCount: subset.length,
+          quizSubset: subset,
+          letter: selectedLetter,
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('測驗設定')),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('1. 選擇測驗等級', style: TextStyle(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8.0,
+              children: quizLevels.map((level) {
+                final isSelected = selectedLevel == level;
+                return FilterChip(
+                  label: Text('等級 $level'),
+                  selected: isSelected,
+                  onSelected: (selected) async {
+                    if (selected) {
+                      setState(() => selectedLevel = level);
+                      await _updateMaxQuestions();
+                    }
+                  },
+                );
+              }).toList(),
+            ),
+            const SizedBox(height: 16),
+            const Text('2. 選擇測驗題數', style: TextStyle(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: countController,
+                    keyboardType: TextInputType.number,
+                    textInputAction: TextInputAction.done,
+                    decoration: InputDecoration(
+                      labelText: '題數 (1-$maxQuestions)',
+                      border: const OutlineInputBorder(),
+                    ),
+                    onChanged: (value) {
+                      final count = int.tryParse(value) ?? 0;
+                      if (count > 0 && count <= maxQuestions) {
+                        setState(() => questionCount = count);
+                      }
+                    },
+                    onSubmitted: (_) => _startQuiz(),
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Text('最多: $maxQuestions 題'),
+              ],
+            ),
+            Slider(
+              value: questionCount.toDouble(),
+              min: 1,
+              max: (maxQuestions > 1 ? maxQuestions : 1).toDouble(),
+              divisions: (maxQuestions > 1 ? maxQuestions - 1 : 1),
+              label: questionCount.toString(),
+              onChanged: (value) {
+                setState(() {
+                  questionCount = value.toInt();
+                  countController.text = questionCount.toString();
+                });
+              },
+            ),
+            const SizedBox(height: 16),
+            const Text('3. 選擇測驗模式', style: TextStyle(fontWeight: FontWeight.bold)),
+            RadioListTile<String>(
+              title: const Text('題目顯示中文（選英文）'),
+              value: 'ch2en',
+              groupValue: quizType,
+              onChanged: (v) => setState(() => quizType = v!),
+            ),
+            RadioListTile<String>(
+              title: const Text('題目顯示英文（選中文）'),
+              value: 'en2ch',
+              groupValue: quizType,
+              onChanged: (v) => setState(() => quizType = v!),
+            ),
+            const SizedBox(height: 12),
+            const Text('4. 選擇測驗字母', style: TextStyle(fontWeight: FontWeight.bold)),
+            FutureBuilder(
+              future: _getLetters(),
+              builder: (context, snapshot) {
+                if (snapshot.hasData) {
+                  letters = snapshot.data!;
+                  return Wrap(
+                    spacing: 8.0,
+                    children: letters.map((letter) {
+                      final isSelected = selectedLetter == letter;
+                      return FilterChip(
+                        label: Text(letter),
+                        selected: isSelected,
+                        onSelected: (selected) {
+                          if (selected) {
+                            setState(() => selectedLetter = letter);
+                          }
+                        },
+                      );
+                    }).toList(),
+                  );
+                } else {
+                  return const CircularProgressIndicator();
+                }
+              },
+            ),
+            const SizedBox(height: 12),
+            Align(
+              alignment: Alignment.centerRight,
+              child: ElevatedButton.icon(
+                onPressed: _startQuiz,
+                icon: const Icon(Icons.play_arrow),
+                label: const Text('開始測驗'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<List<String>> _getLetters() async {
+    String data = await rootBundle.loadString('assets/words.json');
+    List<dynamic> jsonResult = json.decode(data);
+    List<Word> words = jsonResult.map((item) => Word.fromJson(item)).toList();
+    if (selectedLevel != null && selectedLevel != '全部') {
+      words = words.where((w) => w.level == selectedLevel).toList();
+    }
+    final letters = words
+        .map((word) => (word.english.split('/').first.trim()).isEmpty
+            ? '#'
+            : (word.english.split('/').first.trim())[0].toUpperCase())
+        .toSet()
+        .toList();
+    letters.sort();
+    return letters;
   }
 }
 
@@ -1271,7 +1397,17 @@ class Word {
 class WordQuizPage extends StatefulWidget {
   final String? initialLevel;
   final int? initialWordIndex;
-  const WordQuizPage({super.key, this.initialLevel, this.initialWordIndex});
+  final List<Word>? subsetWords; // limit quiz to this subset if provided
+  final String? subsetLetter; // letter label for UI
+  final List<String>? groupOrder; // navigation order of letters within level
+  const WordQuizPage({
+    super.key,
+    this.initialLevel,
+    this.initialWordIndex,
+    this.subsetWords,
+    this.subsetLetter,
+    this.groupOrder,
+  });
   @override
   State<WordQuizPage> createState() => _WordQuizPageState();
 }
@@ -1292,6 +1428,28 @@ class _WordQuizPageState extends State<WordQuizPage> {
   bool isSpeaking = false;
   bool _isPressed = false;
   Timer? _longPressTimer;
+  bool showCompletionPanel = false;
+
+  Future<void> _showSubsetCompleteDialogIfNeeded() async {
+    // Only for subset mode
+    if (!(widget.subsetWords != null && widget.subsetWords!.isNotEmpty)) return;
+    if (!mounted) return;
+    final subsetSize = words.length;
+    final knownInSubset = words.where((w) => knownWords.contains(w.english)).length;
+    if (knownInSubset < subsetSize) return;
+
+    final currentLetter = widget.subsetLetter ?? '';
+    final order = widget.groupOrder ?? [];
+    final currentIdx = currentLetter.isEmpty ? -1 : order.indexOf(currentLetter);
+    final hasNext = currentIdx >= 0 && currentIdx + 1 < order.length;
+    final nextLetter = hasNext ? order[currentIdx + 1] : null;
+
+    // For inline panel flow, simply set a flag to show options in the UI
+    if (!mounted) return;
+    setState(() {
+      showCompletionPanel = true;
+    });
+  }
 
   // Open Cambridge Dictionary for the current word in WebView
   Future<void> _openDictionary() async {
@@ -1381,7 +1539,13 @@ class _WordQuizPageState extends State<WordQuizPage> {
     }
     final prefs = await SharedPreferences.getInstance();
     String level = widget.initialLevel ?? temp.keys.first;
-    List<Word> wordList = List<Word>.from(temp[level] ?? []);
+    List<Word> wordList;
+    if (widget.subsetWords != null && widget.subsetWords!.isNotEmpty) {
+      // use provided subset within level
+      wordList = List<Word>.from(widget.subsetWords!);
+    } else {
+      wordList = List<Word>.from(temp[level] ?? []);
+    }
     // 1) 先從本機載入
     Set<String> known = {};
     try {
@@ -1403,7 +1567,7 @@ class _WordQuizPageState extends State<WordQuizPage> {
     } catch (_) {}
     Set<String> favs = prefs.getStringList('favorite_words')?.toSet() ?? {};
 
-    int firstUnfamiliar = -1;
+    int firstUnfamiliar = 0;
     if (widget.initialWordIndex != null) {
       firstUnfamiliar = widget.initialWordIndex!;
     } else {
@@ -1423,11 +1587,16 @@ class _WordQuizPageState extends State<WordQuizPage> {
       knownWords = known;
       favoriteWords = favs;
       knownCount = known.length;
-      currentIndex = firstUnfamiliar;
+      currentIndex = widget.initialWordIndex ?? firstUnfamiliar;
       isFinished = known.length >= words.length;
       showChinese = false;
       isLoading = false;
     });
+
+    // Show inline completion panel if subset already finished on load
+    if ((widget.subsetWords != null && widget.subsetWords!.isNotEmpty) && isFinished) {
+      setState(() => showCompletionPanel = true);
+    }
 
     final settings = SettingsProvider.of(context);
     if (settings.autoSpeak && words.isNotEmpty && !isFinished) {
@@ -1488,6 +1657,11 @@ class _WordQuizPageState extends State<WordQuizPage> {
     if (settings.autoSpeak && !isFinished && currentIndex < words.length) {
       speakWord(words[currentIndex].english);
     }
+
+    // If subset finished, show inline completion panel
+    if (isFinished && (widget.subsetWords != null && widget.subsetWords!.isNotEmpty)) {
+      setState(() => showCompletionPanel = true);
+    }
   }
 
   // Async method to save progress without blocking UI
@@ -1542,6 +1716,29 @@ class _WordQuizPageState extends State<WordQuizPage> {
     setState(() {});
   }
 
+  Widget _buildActionButton(
+    String text, IconData icon, Color color, VoidCallback onPressed) {
+    return SizedBox(
+      width: 220,
+      height: 52,
+      child: ElevatedButton.icon(
+        icon: Icon(icon, color: Colors.white),
+        label: Text(
+          text,
+          style: const TextStyle(fontSize: 18, color: Colors.white),
+        ),
+        onPressed: onPressed,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: color,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(26),
+          ),
+          elevation: 2,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (isLoading) {
@@ -1589,7 +1786,7 @@ class _WordQuizPageState extends State<WordQuizPage> {
           ),
           // 單字卡或完成畫面
           Center(
-            child: isFinished
+            child: showCompletionPanel
                 ? Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
@@ -1598,42 +1795,72 @@ class _WordQuizPageState extends State<WordQuizPage> {
                         color: Color(0xFFFFC700),
                         size: 100,
                       ),
-                      const SizedBox(height: 32),
-                      const Text(
-                        '恭喜你完成本等級所有單字！',
-                        style: TextStyle(
+                      const SizedBox(height: 24),
+                      Text(
+                        '完成 ${widget.subsetLetter ?? ''} 組單字',
+                        style: const TextStyle(
                           fontSize: 26,
                           fontWeight: FontWeight.w600,
                           color: Color(0xFF222222),
                         ),
                       ),
-                      const SizedBox(height: 18),
+                      const SizedBox(height: 8),
                       Text(
                         '熟知單字：$knownCount / ${words.length}',
                         style: const TextStyle(
                           fontSize: 20,
-                          color: Color(0xFF222222),
+                          color: Color(0xFF666666),
                         ),
                       ),
                       const SizedBox(height: 40),
-                      SizedBox(
-                        width: 180,
-                        height: 48,
-                        child: ElevatedButton(
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: progressColor,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(24),
-                            ),
-                            elevation: 0,
-                          ),
-                          onPressed: () {
-                            Navigator.pop(context);
+                      _buildActionButton(
+                        '重新開始',
+                        Icons.refresh,
+                        Colors.blue,
+                        () {
+                          setState(() {
+                            showCompletionPanel = false;
+                            currentIndex = 0; // Or find first unknown
+                          });
+                        },
+                      ),
+                      const SizedBox(height: 16),
+                      if (widget.groupOrder != null &&
+                          widget.subsetLetter != null &&
+                          widget.groupOrder!.indexOf(widget.subsetLetter!) <
+                              widget.groupOrder!.length - 1)
+                        _buildActionButton(
+                          '下一組',
+                          Icons.arrow_forward,
+                          Colors.green,
+                          () {
+                            // Navigate to the next letter's WordQuizPage
                           },
-                          child: const Text(
-                            '返回等級選單',
-                            style: TextStyle(fontSize: 18, color: Colors.white),
-                          ),
+                        ),
+                      const SizedBox(height: 16),
+                      _buildActionButton(
+                        '測驗本組',
+                        Icons.quiz,
+                        Colors.purple,
+                        () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => QuizPage(
+                                type: 'ch2en',
+                                level: selectedLevel ?? '1',
+                                quizSubset: words,
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                      const SizedBox(height: 24),
+                      TextButton(
+                        onPressed: () => Navigator.pop(context),
+                        child: const Text(
+                          '返回列表',
+                          style: TextStyle(fontSize: 16, color: Colors.grey),
                         ),
                       ),
                     ],
@@ -1932,36 +2159,107 @@ class _WordQuizPageState extends State<WordQuizPage> {
   }
 }
 
-class WordListPage extends StatelessWidget {
+class WordListPage extends StatefulWidget {
   final String level;
   final List<Word> words;
+  final List<String>? groupOrder;
+  final String? currentLetter;
 
-  const WordListPage({super.key, required this.level, required this.words});
+  const WordListPage({
+    super.key,
+    required this.level,
+    required this.words,
+    this.groupOrder,
+    this.currentLetter,
+  });
+
+  @override
+  State<WordListPage> createState() => _WordListPageState();
+}
+
+class _WordListPageState extends State<WordListPage> {
+  Set<String> _knownWords = {};
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadKnownWords();
+  }
+
+  Future<void> _loadKnownWords() async {
+    final prefs = await SharedPreferences.getInstance();
+    final known = prefs.getStringList('known_${widget.level}') ?? [];
+    if (mounted) {
+      setState(() {
+        _knownWords = Set.from(known);
+        _isLoading = false;
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text('等級 $level - 單字列表')),
-      body: ListView.builder(
-        itemCount: words.length,
-        itemBuilder: (context, index) {
-          final word = words[index];
-          return ListTile(
-            title: Text(word.english),
-            subtitle: Text(word.chinese),
-            onTap: () {
-              Navigator.pushReplacement(
+      appBar: AppBar(title: Text('等級 ${widget.level} - 單字列表')),
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : ListView.builder(
+              itemCount: widget.words.length,
+              itemBuilder: (context, index) {
+                final word = widget.words[index];
+                final isKnown = _knownWords.contains(word.english);
+                return ListTile(
+                  title: Text(
+                    word.english,
+                    style: TextStyle(color: isKnown ? Colors.green : Colors.red),
+                  ),
+                  subtitle: Text(word.chinese),
+                  // onTap functionality removed as requested
+                );
+              },
+            ),
+      floatingActionButton: Row(
+        mainAxisAlignment: MainAxisAlignment.end,
+        children: [
+          FloatingActionButton.extended(
+            onPressed: () {
+              Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (_) => WordQuizPage(
-                    initialLevel: level,
-                    initialWordIndex: index,
+                  builder: (_) => QuizPage(
+                    type: 'ch2en',
+                    level: widget.level,
+                    quizSubset: widget.words,
+                    letter: widget.currentLetter,
                   ),
                 ),
               );
             },
-          );
-        },
+            label: const Text('測驗'),
+            icon: const Icon(Icons.quiz),
+            heroTag: 'quiz_fab',
+          ),
+          const SizedBox(width: 16),
+          FloatingActionButton.extended(
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => WordQuizPage(
+                    initialLevel: widget.level,
+                    subsetWords: widget.words,
+                    subsetLetter: widget.currentLetter,
+                    groupOrder: widget.groupOrder,
+                  ),
+                ),
+              ).then((_) => _loadKnownWords()); // Refresh known words when returning
+            },
+            label: const Text('開始'),
+            icon: const Icon(Icons.play_arrow),
+            heroTag: 'start_fab',
+          ),
+        ],
       ),
     );
   }
@@ -2041,11 +2339,15 @@ class QuizPage extends StatefulWidget {
   final String type; // 'ch2en' or 'en2ch'
   final String level;
   final int questionCount;
+  final List<Word>? quizSubset; // if provided, quiz only these words
+  final String? letter; // optional letter filter for level
   const QuizPage({
     super.key,
     required this.type,
     required this.level,
     this.questionCount = 10, // Default to 10 if not specified
+    this.quizSubset,
+    this.letter,
   });
   @override
   State<QuizPage> createState() => _QuizPageState();
@@ -2067,38 +2369,28 @@ class _QuizPageState extends State<QuizPage> {
   @override
   void initState() {
     super.initState();
-    _resetQuiz();
+    loadQuiz();
   }
 
   Future<void> _resetQuiz() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (BuildContext context) => AlertDialog(
-        title: const Text('確定要重新開始測驗嗎？'),
-        content: const Text('這將清除目前的測驗進度。'),
-        actions: <Widget>[
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('取消'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('確定'),
-          ),
-        ],
-      ),
-    );
+    if (mounted) {
+      // Clear quiz data to ensure it's regenerated
+      quizWords.clear();
+      userAnswers.clear();
+      optionsList.clear();
 
-    if (confirmed == true) {
-      if (mounted) {
-        setState(() {
-          _showAnswer = false;
-          _isAnswerCorrect = false;
-          _selectedIndex = null;
-          _showAllTranslations = false;
-        });
-        loadQuiz();
-      }
+      setState(() {
+        current = 0;
+        score = 0;
+        _showAnswer = false;
+        _isAnswerCorrect = false;
+        _selectedIndex = null;
+        _showAllTranslations = false;
+        _isProcessing = false;
+      });
+
+      // Reload the quiz with fresh data
+      await loadQuiz();
     }
   }
 
@@ -2108,10 +2400,22 @@ class _QuizPageState extends State<QuizPage> {
     allWords = jsonResult.map((item) => Word.fromJson(item)).toList();
 
     List<Word> filteredWords;
-    if (widget.level == '全部') {
-      filteredWords = List.from(allWords);
+    if (widget.quizSubset != null && widget.quizSubset!.isNotEmpty) {
+      filteredWords = List.from(widget.quizSubset!);
     } else {
-      filteredWords = allWords.where((w) => w.level == widget.level).toList();
+      if (widget.level == '全部') {
+        filteredWords = List.from(allWords);
+      } else {
+        filteredWords = allWords.where((w) => w.level == widget.level).toList();
+      }
+      if (widget.letter != null && widget.letter!.isNotEmpty) {
+        final letter = widget.letter!.toUpperCase();
+        filteredWords = filteredWords
+            .where((w) => (w.english.split('/').first.trim())
+                .toUpperCase()
+                .startsWith(letter))
+            .toList();
+      }
     }
 
     // Only shuffle and take new questions if we're not restoring state

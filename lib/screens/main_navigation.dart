@@ -15,7 +15,7 @@ class _MainNavigationState extends State<MainNavigation> {
   static final List<Widget> _widgetOptions = <Widget>[
     const LevelSelectPage(), // 主頁 - 單字卡
     const PlaceholderWidget('關卡模式'), // 關卡模式 (待實現)
-    const PlaceholderWidget('比賽'),     // 比賽 (待實現)
+    const QuizOptionsPage(), // 測驗設定頁
     const AccountScreen(),     // 帳號頁面
   ];
 
@@ -51,9 +51,9 @@ class _MainNavigationState extends State<MainNavigation> {
             label: '關卡模式',
           ),
           BottomNavigationBarItem(
-            icon: Icon(Icons.emoji_events_outlined),
-            activeIcon: Icon(Icons.emoji_events),
-            label: '比賽',
+            icon: Icon(Icons.quiz_outlined),
+            activeIcon: Icon(Icons.quiz),
+            label: '測驗',
           ),
           BottomNavigationBarItem(
             icon: Icon(Icons.person_outline),
