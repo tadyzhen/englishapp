@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../main.dart';
 import 'account_screen.dart';
+import 'learning_stats_screen.dart';
 
 class MainNavigation extends StatefulWidget {
   const MainNavigation({super.key});
@@ -14,7 +15,7 @@ class _MainNavigationState extends State<MainNavigation> {
 
   static final List<Widget> _widgetOptions = <Widget>[
     const LevelSelectPage(), // 主頁 - 單字卡
-    const PlaceholderWidget('關卡模式'), // 關卡模式 (待實現)
+    const LearningStatsScreen(), // 學習統計
     const QuizOptionsPage(), // 測驗設定頁
     const AccountScreen(),     // 帳號頁面
   ];
@@ -46,9 +47,9 @@ class _MainNavigationState extends State<MainNavigation> {
             label: '主頁',
           ),
           BottomNavigationBarItem(
-            icon: Icon(Icons.star_outline),
-            activeIcon: Icon(Icons.star),
-            label: '關卡模式',
+            icon: Icon(Icons.analytics_outlined),
+            activeIcon: Icon(Icons.analytics),
+            label: '統計',
           ),
           BottomNavigationBarItem(
             icon: Icon(Icons.quiz_outlined),

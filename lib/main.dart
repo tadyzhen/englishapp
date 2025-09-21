@@ -12,6 +12,7 @@ import 'firebase_options.dart';
 import 'dictionary_webview.dart';
 import 'screens/modern_login_screen.dart';
 import 'screens/main_navigation.dart';
+import 'services/learning_stats_service.dart';
 
 // Utility class for shared functionality
 class AppUtils {
@@ -1667,6 +1668,7 @@ class _WordQuizPageState extends State<WordQuizPage> {
     if (isFinished) return;
 
     String wordKey = words[currentIndex].english;
+    final wasKnown = knownWords.contains(wordKey);
 
     // Update known words set based on swipe direction
     if (known) {
@@ -1697,6 +1699,18 @@ class _WordQuizPageState extends State<WordQuizPage> {
 
     // Perform async operations without blocking UI
     _saveProgressAsync(known, wordKey);
+
+    // Record learning progress for statistics
+    if (known && !wasKnown) {
+      // Only count as new learning if word wasn't known before
+      await LearningStatsService.updateLearningProgress(
+        level: selectedLevel ?? '1',
+        wordsLearned: 1,
+        studyTimeMinutes: 1, // Estimate 1 minute per word
+        correctAnswers: 1,
+        totalAnswers: 1,
+      );
+    }
 
     // Auto-speak immediately if enabled
     final settings = SettingsProvider.of(context);
@@ -2592,6 +2606,27 @@ class _QuizPageState extends State<QuizPage> {
         _showAllTranslations = false;
       });
     } else {
+      // Calculate quiz results before navigating
+      int correctAnswers = 0;
+      for (int i = 0; i < quizWords.length; i++) {
+        if (userAnswers[i] >= 0) {
+          final correctIdx = optionsList[i].indexWhere(
+            (w) => w.english == quizWords[i].english,
+          );
+          if (userAnswers[i] == correctIdx) {
+            correctAnswers++;
+          }
+        }
+      }
+      
+      // Record quiz result for statistics
+      LearningStatsService.updateQuizResult(
+        level: widget.level ?? '1',
+        score: correctAnswers,
+        totalQuestions: quizWords.length,
+        studyTimeMinutes: 5, // Estimate 5 minutes per quiz
+      );
+
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(
