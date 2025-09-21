@@ -7,7 +7,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_tts/flutter_tts.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'package:vibration/vibration.dart';
 import 'firebase_options.dart';
 import 'dictionary_webview.dart';
@@ -39,6 +38,7 @@ class AppSettings extends ChangeNotifier {
   bool autoSpeak;
   double speechRate;
   double speechPitch;
+  double speechVolume;
   Map<String, String>? ttsVoice;
 
   AppSettings({
@@ -46,6 +46,7 @@ class AppSettings extends ChangeNotifier {
     this.autoSpeak = false,
     this.speechRate = 0.4,
     this.speechPitch = 1.0,
+    this.speechVolume = 1.0,
     this.ttsVoice,
   });
 
@@ -77,6 +78,13 @@ class AppSettings extends ChangeNotifier {
     prefs.setDouble('speechPitch', pitch);
   }
 
+  void setSpeechVolume(double volume) async {
+    speechVolume = volume;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    prefs.setDouble('speechVolume', volume);
+  }
+
   void setTtsVoice(Map<String, String> voice) async {
     ttsVoice = voice;
     notifyListeners();
@@ -90,6 +98,7 @@ class AppSettings extends ChangeNotifier {
     bool autoSpeak = prefs.getBool('autoSpeak') ?? false;
     double speechRate = prefs.getDouble('speechRate') ?? 0.4;
     double speechPitch = prefs.getDouble('speechPitch') ?? 1.0;
+    double speechVolume = prefs.getDouble('speechVolume') ?? 1.0;
     Map<String, String>? ttsVoice;
     String? voiceString = prefs.getString('ttsVoice');
     if (voiceString != null) {
@@ -101,6 +110,7 @@ class AppSettings extends ChangeNotifier {
       autoSpeak: autoSpeak,
       speechRate: speechRate,
       speechPitch: speechPitch,
+      speechVolume: speechVolume,
       ttsVoice: ttsVoice,
     );
   }
@@ -653,20 +663,6 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
 
   // （已移除）_getWordCountForLevel：測驗頁面自帶計數函式
 
-  Future<void> _launchURL(String word) async {
-    // Always use the part before "/" for dictionary lookup
-    final cleanWord = word.split('/').first.trim();
-    final url =
-        'https://dictionary.cambridge.org/zht/%E8%A9%9E%E5%85%B8/%E8%8B%B1%E8%AA%9E-%E6%BC%A2%E8%AA%9E-%E7%B9%81%E9%AB%94/$cleanWord';
-    final uri = Uri.parse(url);
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
-    } else if (mounted) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('無法開啟字典: $cleanWord')));
-    }
-  }
 
   // (removed) _showQuizOptions: 測驗設定已移至 QuizOptionsPage 分頁
 
@@ -681,8 +677,6 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
 
   @override
   Widget build(BuildContext context) {
-    final double gridSpacing = 24;
-    final Color mainButtonColor = Theme.of(context).colorScheme.primary;
     return Scaffold(
       appBar: AppBar(
         title: const Text('高嚴凱是給學測7000單'),
@@ -932,8 +926,9 @@ class _QuizOptionsPageState extends State<QuizOptionsPage> {
   int maxQuestions = 10;
   String quizType = 'ch2en';
   final TextEditingController countController = TextEditingController(text: '10');
-  List<String> letters = [];
-  String? selectedLetter;
+  List<String> letters = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 
+                         'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z', '全部'];
+  String? selectedLetter = '全部';
 
   @override
   void initState() {
@@ -943,8 +938,17 @@ class _QuizOptionsPageState extends State<QuizOptionsPage> {
 
   Future<void> _updateMaxQuestions() async {
     if (!mounted) return;
-    final count = await _getWordCountForLevel(selectedLevel ?? '全部');
+    
+    int count;
+    if (selectedLevel == '全部' && (selectedLetter == null || selectedLetter == '全部')) {
+      // 如果等級和字母都選擇「全部」，則使用固定的大題數
+      count = 100; // 或其他你認為合適的數字
+    } else {
+      count = await _getWordCountForLevel(selectedLevel ?? '全部');
+    }
+    
     if (!mounted) return;
+    
     setState(() {
       maxQuestions = count;
       if (questionCount > maxQuestions) {
@@ -967,31 +971,65 @@ class _QuizOptionsPageState extends State<QuizOptionsPage> {
   }
 
   void _startQuiz() async {
-    final level = selectedLevel ?? '全部';
-    // Build the subset and use its size as the question count
+    final level = selectedLevel == '全部' ? null : selectedLevel;
+    final letter = selectedLetter == '全部' ? null : selectedLetter;
+    
+    // Build the subset
     String data = await rootBundle.loadString('assets/words.json');
     List<dynamic> jsonResult = json.decode(data);
     List<Word> all = jsonResult.map((item) => Word.fromJson(item)).toList();
-    List<Word> filtered = level == '全部' ? all : all.where((w) => w.level == level).toList();
-    List<Word> subset;
-    if (selectedLetter != null && selectedLetter!.isNotEmpty) {
-      final l = selectedLetter!.toUpperCase();
-      subset = filtered
-          .where((w) => (w.english.split('/').first.trim()).toUpperCase().startsWith(l))
-          .toList();
-    } else {
-      subset = filtered;
+    
+    // 過濾單字
+    List<Word> filtered = all.where((w) {
+      bool matchesLevel = level == null || w.level == level;
+      bool matchesLetter = letter == null || 
+          (w.english.isNotEmpty && 
+           w.english[0].toUpperCase() == letter.toUpperCase());
+      return matchesLevel && matchesLetter;
+    }).toList();
+    
+    // 確保有足夠的單字
+    if (filtered.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('沒有找到符合條件的單字，請調整篩選條件')),
+        );
+      }
+      return;
     }
     if (!mounted) return;
+    
+    // 如果選擇了特定等級且字母為「全部」，則使用用戶選擇的題數
+    // 否則使用所有符合條件的單字
+    final int actualQuestionCount = 
+        (level != null && (letter == null || letter == '全部')) 
+            ? questionCount 
+            : filtered.length;
+    
+    // 確保不超過可用單字數量
+    final int finalQuestionCount = actualQuestionCount > filtered.length 
+        ? filtered.length 
+        : actualQuestionCount;
+    
+    // 如果用戶選擇的題數大於可用單字數量，顯示提示
+    if (actualQuestionCount > filtered.length && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('可用的單字數量為 ${filtered.length} 個，將使用全部可用單字'),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    }
+    
     Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) => QuizPage(
           type: quizType,
           level: level,
-          questionCount: subset.length,
-          quizSubset: subset,
-          letter: selectedLetter,
+          questionCount: finalQuestionCount,
+          quizSubset: filtered,
+          letter: letter,
         ),
       ),
     );
@@ -1025,46 +1063,49 @@ class _QuizOptionsPageState extends State<QuizOptionsPage> {
               }).toList(),
             ),
             const SizedBox(height: 16),
-            const Text('2. 選擇測驗題數', style: TextStyle(fontWeight: FontWeight.bold)),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: countController,
-                    keyboardType: TextInputType.number,
-                    textInputAction: TextInputAction.done,
-                    decoration: InputDecoration(
-                      labelText: '題數 (1-$maxQuestions)',
-                      border: const OutlineInputBorder(),
+            // 只有在選擇了特定等級且字母為「全部」時才顯示題數選擇
+            if (selectedLevel != '全部' && (selectedLetter == null || selectedLetter == '全部')) ...[
+              const Text('2. 選擇測驗題數', style: TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: countController,
+                      keyboardType: TextInputType.number,
+                      textInputAction: TextInputAction.done,
+                      decoration: InputDecoration(
+                        labelText: '題數 (1-$maxQuestions)',
+                        border: const OutlineInputBorder(),
+                      ),
+                      onChanged: (value) {
+                        final count = int.tryParse(value) ?? 0;
+                        if (count > 0 && count <= maxQuestions) {
+                          setState(() => questionCount = count);
+                        }
+                      },
+                      onSubmitted: (_) => _startQuiz(),
                     ),
-                    onChanged: (value) {
-                      final count = int.tryParse(value) ?? 0;
-                      if (count > 0 && count <= maxQuestions) {
-                        setState(() => questionCount = count);
-                      }
-                    },
-                    onSubmitted: (_) => _startQuiz(),
                   ),
-                ),
-                const SizedBox(width: 16),
-                Text('最多: $maxQuestions 題'),
-              ],
-            ),
-            Slider(
-              value: questionCount.toDouble(),
-              min: 1,
-              max: (maxQuestions > 1 ? maxQuestions : 1).toDouble(),
-              divisions: (maxQuestions > 1 ? maxQuestions - 1 : 1),
-              label: questionCount.toString(),
-              onChanged: (value) {
-                setState(() {
-                  questionCount = value.toInt();
-                  countController.text = questionCount.toString();
-                });
-              },
-            ),
-            const SizedBox(height: 16),
+                  const SizedBox(width: 16),
+                  Text('最多: $maxQuestions 題'),
+                ],
+              ),
+              Slider(
+                value: questionCount.toDouble(),
+                min: 1,
+                max: (maxQuestions > 1 ? maxQuestions : 1).toDouble(),
+                divisions: (maxQuestions > 1 ? maxQuestions - 1 : 1),
+                label: questionCount.toString(),
+                onChanged: (value) {
+                  setState(() {
+                    questionCount = value.toInt();
+                    countController.text = questionCount.toString();
+                  });
+                },
+              ),
+              const SizedBox(height: 16),
+            ],
             const Text('3. 選擇測驗模式', style: TextStyle(fontWeight: FontWeight.bold)),
             RadioListTile<String>(
               title: const Text('題目顯示中文（選英文）'),
@@ -1084,18 +1125,18 @@ class _QuizOptionsPageState extends State<QuizOptionsPage> {
               future: _getLetters(),
               builder: (context, snapshot) {
                 if (snapshot.hasData) {
-                  letters = snapshot.data!;
                   return Wrap(
                     spacing: 8.0,
-                    children: letters.map((letter) {
+                    children: snapshot.data!.map((letter) {
                       final isSelected = selectedLetter == letter;
                       return FilterChip(
                         label: Text(letter),
                         selected: isSelected,
                         onSelected: (selected) {
-                          if (selected) {
-                            setState(() => selectedLetter = letter);
-                          }
+                          setState(() {
+                            selectedLetter = selected ? letter : null;
+                            _updateMaxQuestions(); // 更新最大題數
+                          });
                         },
                       );
                     }).toList(),
@@ -1121,20 +1162,8 @@ class _QuizOptionsPageState extends State<QuizOptionsPage> {
   }
 
   Future<List<String>> _getLetters() async {
-    String data = await rootBundle.loadString('assets/words.json');
-    List<dynamic> jsonResult = json.decode(data);
-    List<Word> words = jsonResult.map((item) => Word.fromJson(item)).toList();
-    if (selectedLevel != null && selectedLevel != '全部') {
-      words = words.where((w) => w.level == selectedLevel).toList();
-    }
-    final letters = words
-        .map((word) => (word.english.split('/').first.trim()).isEmpty
-            ? '#'
-            : (word.english.split('/').first.trim())[0].toUpperCase())
-        .toSet()
-        .toList();
-    letters.sort();
-    return letters;
+    return ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 
+            'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z', '全部'];
   }
 }
 
@@ -1309,6 +1338,22 @@ class _SettingsDialogState extends State<SettingsDialog> {
               ],
             ),
             const Divider(),
+            // Speech Volume
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('語音音量', style: TextStyle(fontSize: 18)),
+                Slider(
+                  value: settings.speechVolume,
+                  min: 0.0,
+                  max: 1.0,
+                  divisions: 10,
+                  label: '${(settings.speechVolume * 100).toInt()}%',
+                  onChanged: (volume) => settings.setSpeechVolume(volume),
+                ),
+              ],
+            ),
+            const Divider(),
             // Voice Selection
             if (_displayVoices.isNotEmpty)
               Row(
@@ -1430,26 +1475,6 @@ class _WordQuizPageState extends State<WordQuizPage> {
   Timer? _longPressTimer;
   bool showCompletionPanel = false;
 
-  Future<void> _showSubsetCompleteDialogIfNeeded() async {
-    // Only for subset mode
-    if (!(widget.subsetWords != null && widget.subsetWords!.isNotEmpty)) return;
-    if (!mounted) return;
-    final subsetSize = words.length;
-    final knownInSubset = words.where((w) => knownWords.contains(w.english)).length;
-    if (knownInSubset < subsetSize) return;
-
-    final currentLetter = widget.subsetLetter ?? '';
-    final order = widget.groupOrder ?? [];
-    final currentIdx = currentLetter.isEmpty ? -1 : order.indexOf(currentLetter);
-    final hasNext = currentIdx >= 0 && currentIdx + 1 < order.length;
-    final nextLetter = hasNext ? order[currentIdx + 1] : null;
-
-    // For inline panel flow, simply set a flag to show options in the UI
-    if (!mounted) return;
-    setState(() {
-      showCompletionPanel = true;
-    });
-  }
 
   // Open Cambridge Dictionary for the current word in WebView
   Future<void> _openDictionary() async {
@@ -1480,6 +1505,19 @@ class _WordQuizPageState extends State<WordQuizPage> {
     await flutterTts.setLanguage("en-US");
     await flutterTts.setSpeechRate(settings.speechRate);
     await flutterTts.setPitch(settings.speechPitch);
+    await flutterTts.setVolume(settings.speechVolume);
+    
+    // Configure audio session to not pause background music
+    await flutterTts.setIosAudioCategory(
+      IosTextToSpeechAudioCategory.playback,
+      [
+        IosTextToSpeechAudioCategoryOptions.allowBluetooth,
+        IosTextToSpeechAudioCategoryOptions.allowBluetoothA2DP,
+        IosTextToSpeechAudioCategoryOptions.mixWithOthers,
+      ],
+      IosTextToSpeechAudioMode.spokenAudio,
+    );
+    
     if (settings.ttsVoice != null) {
       await flutterTts.setVoice(settings.ttsVoice!);
     }
@@ -1580,15 +1618,25 @@ class _WordQuizPageState extends State<WordQuizPage> {
       if (firstUnfamiliar == -1) firstUnfamiliar = 0;
     }
 
+    // Calculate known count for current subset only
+    int subsetKnownCount = 0;
+    if (widget.subsetWords != null && widget.subsetWords!.isNotEmpty) {
+      // For subset mode, count only words in current subset that are known
+      subsetKnownCount = wordList.where((w) => known.contains(w.english)).length;
+    } else {
+      // For full level mode, use total known count
+      subsetKnownCount = known.length;
+    }
+
     setState(() {
       levelWords = temp;
       selectedLevel = level;
       words = wordList;
       knownWords = known;
       favoriteWords = favs;
-      knownCount = known.length;
+      knownCount = subsetKnownCount;
       currentIndex = widget.initialWordIndex ?? firstUnfamiliar;
-      isFinished = known.length >= words.length;
+      isFinished = subsetKnownCount >= words.length;
       showChinese = false;
       isLoading = false;
     });
@@ -1614,14 +1662,6 @@ class _WordQuizPageState extends State<WordQuizPage> {
     return -1; // No more unfamiliar words
   }
 
-  int _findPreviousUnfamiliarIndex(int fromIndex) {
-    for (int i = fromIndex - 1; i >= 0; i--) {
-      if (!knownWords.contains(words[i].english)) {
-        return i;
-      }
-    }
-    return -1; // No previous unfamiliar words
-  }
 
   Future<void> handleSwipe(bool known) async {
     if (isFinished) return;
@@ -1639,8 +1679,14 @@ class _WordQuizPageState extends State<WordQuizPage> {
 
     // Update UI immediately for instant response
     setState(() {
-      // Always update knownCount to reflect current knownWords size
-      knownCount = knownWords.length;
+      // Update knownCount to reflect current subset's known words only
+      if (widget.subsetWords != null && widget.subsetWords!.isNotEmpty) {
+        // For subset mode, count only words in current subset that are known
+        knownCount = words.where((w) => knownWords.contains(w.english)).length;
+      } else {
+        // For full level mode, use total known count
+        knownCount = knownWords.length;
+      }
       if (nextIndex != -1) {
         currentIndex = nextIndex;
         showChinese = false;
@@ -1817,10 +1863,32 @@ class _WordQuizPageState extends State<WordQuizPage> {
                         '重新開始',
                         Icons.refresh,
                         Colors.blue,
-                        () {
+                        () async {
+                          // Reset known words for current subset only
+                          if (widget.subsetWords != null && widget.subsetWords!.isNotEmpty) {
+                            // Remove only current subset words from knownWords
+                            for (final word in words) {
+                              knownWords.remove(word.english);
+                            }
+                            
+                            // Update known count for current subset
+                            knownCount = 0;
+                            
+                            // Save updated progress
+                            final prefs = await SharedPreferences.getInstance();
+                            String key = 'known_${selectedLevel ?? ''}';
+                            await prefs.setStringList(key, knownWords.toList());
+                            
+                            // Cloud sync
+                            if (selectedLevel != null && selectedLevel!.isNotEmpty) {
+                              FirestoreSync.uploadKnownWordsForLevel(selectedLevel!, knownWords.toList()).catchError((e) {});
+                            }
+                          }
+                          
                           setState(() {
                             showCompletionPanel = false;
-                            currentIndex = 0; // Or find first unknown
+                            currentIndex = 0;
+                            isFinished = false;
                           });
                         },
                       ),
@@ -1833,8 +1901,39 @@ class _WordQuizPageState extends State<WordQuizPage> {
                           '下一組',
                           Icons.arrow_forward,
                           Colors.green,
-                          () {
-                            // Navigate to the next letter's WordQuizPage
+                          () async {
+                            // Find next letter in group order
+                            final currentIndex = widget.groupOrder!.indexOf(widget.subsetLetter!);
+                            if (currentIndex >= 0 && currentIndex + 1 < widget.groupOrder!.length) {
+                              final nextLetter = widget.groupOrder![currentIndex + 1];
+                              
+                              // Load words for next letter
+                              String data = await rootBundle.loadString('assets/words.json');
+                              List<dynamic> jsonResult = json.decode(data);
+                              List<Word> allWords = jsonResult.map((item) => Word.fromJson(item)).toList();
+                              
+                              // Filter words for next letter in same level
+                              List<Word> nextLetterWords = allWords.where((w) {
+                                return w.level == selectedLevel && 
+                                       w.english.isNotEmpty && 
+                                       w.english[0].toUpperCase() == nextLetter;
+                              }).toList();
+                              
+                              if (nextLetterWords.isNotEmpty) {
+                                // Navigate to next letter's WordQuizPage
+                                Navigator.pushReplacement(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => WordQuizPage(
+                                      initialLevel: selectedLevel,
+                                      subsetWords: nextLetterWords,
+                                      subsetLetter: nextLetter,
+                                      groupOrder: widget.groupOrder,
+                                    ),
+                                  ),
+                                );
+                              }
+                            }
                           },
                         ),
                       const SizedBox(height: 16),
@@ -2337,15 +2436,15 @@ class _FavoritePageState extends State<FavoritePage> {
 
 class QuizPage extends StatefulWidget {
   final String type; // 'ch2en' or 'en2ch'
-  final String level;
-  final int questionCount;
+  final String? level;
+  final int? questionCount;
   final List<Word>? quizSubset; // if provided, quiz only these words
   final String? letter; // optional letter filter for level
   const QuizPage({
     super.key,
     required this.type,
-    required this.level,
-    this.questionCount = 10, // Default to 10 if not specified
+    this.level,
+    this.questionCount,
     this.quizSubset,
     this.letter,
   });
@@ -2374,11 +2473,6 @@ class _QuizPageState extends State<QuizPage> {
 
   Future<void> _resetQuiz() async {
     if (mounted) {
-      // Clear quiz data to ensure it's regenerated
-      quizWords.clear();
-      userAnswers.clear();
-      optionsList.clear();
-
       setState(() {
         current = 0;
         score = 0;
@@ -2388,71 +2482,59 @@ class _QuizPageState extends State<QuizPage> {
         _showAllTranslations = false;
         _isProcessing = false;
       });
-
-      // Reload the quiz with fresh data
       await loadQuiz();
     }
   }
 
   Future<void> loadQuiz() async {
+    if (!mounted) return;
+
+    // 1. Load all words from JSON
     String data = await rootBundle.loadString('assets/words.json');
     List<dynamic> jsonResult = json.decode(data);
     allWords = jsonResult.map((item) => Word.fromJson(item)).toList();
 
     List<Word> filteredWords;
+
+    // 2. Determine the pool of words for the quiz
     if (widget.quizSubset != null && widget.quizSubset!.isNotEmpty) {
       filteredWords = List.from(widget.quizSubset!);
     } else {
-      if (widget.level == '全部') {
-        filteredWords = List.from(allWords);
-      } else {
-        filteredWords = allWords.where((w) => w.level == widget.level).toList();
-      }
-      if (widget.letter != null && widget.letter!.isNotEmpty) {
-        final letter = widget.letter!.toUpperCase();
-        filteredWords = filteredWords
-            .where((w) => (w.english.split('/').first.trim())
-                .toUpperCase()
-                .startsWith(letter))
-            .toList();
-      }
+      filteredWords = allWords.where((word) {
+        bool levelMatch = widget.level == null || word.level == widget.level;
+        bool letterMatch = widget.letter == null ||
+            word.english.toLowerCase().startsWith(widget.letter!.toLowerCase());
+        return levelMatch && letterMatch;
+      }).toList();
     }
 
-    // Only shuffle and take new questions if we're not restoring state
-    if (quizWords.isEmpty) {
-      filteredWords.shuffle();
-      final count = widget.questionCount > filteredWords.length
-          ? filteredWords.length
-          : widget.questionCount;
-      quizWords = filteredWords.take(count).toList();
-    }
+    filteredWords.shuffle();
 
-    // 預先產生每題的選項
+    // 3. Determine the final number of questions
+    int count = filteredWords.length;
+    if (widget.questionCount != null) {
+      count = widget.questionCount! < count ? widget.questionCount! : count;
+    }
+    quizWords = filteredWords.take(count).toList();
+
+    // 4. Generate options for each question
     optionsList = quizWords.map((answer) {
       List<Word> options = [answer];
-      List<Word> pool =
-          allWords.where((w) => w.english != answer.english).toList();
-      pool.shuffle();
-      while (options.length < 4 && pool.isNotEmpty) {
-        options.add(pool.removeLast());
-      }
+      List<Word> distractors = allWords
+          .where((w) =>
+              w.english != answer.english &&
+              (widget.level == null || w.level == widget.level))
+          .toList();
+      distractors.shuffle();
+      options.addAll(distractors.take(3));
       options.shuffle();
       return options;
     }).toList();
 
-    // Initialize userAnswers if not already done
-    if (userAnswers.length != quizWords.length) {
-      userAnswers = List.filled(quizWords.length, -1);
-    }
+    // 5. Initialize user answers and update UI
+    userAnswers = List.filled(quizWords.length, -1);
 
-    if (mounted) {
-      setState(() {
-        current = 0;
-        score = userAnswers
-            .where((ans) => ans != -1)
-            .length; // Count already answered questions
-      });
-    }
+    setState(() {});
   }
 
   void _handleAnswer(int selectedIndex) {
@@ -2466,9 +2548,7 @@ class _QuizPageState extends State<QuizPage> {
       );
       _isAnswerCorrect = selectedIndex == correctIdx;
 
-      // Update the answer in our tracking
       if (userAnswers[current] == -1) {
-        // Only update if not already answered
         if (_isAnswerCorrect) {
           score++;
         }
@@ -2477,11 +2557,9 @@ class _QuizPageState extends State<QuizPage> {
 
       if (_isAnswerCorrect) {
         _showAllTranslations = false;
-        // Auto-advance to next question after a short delay if answer is correct
         Future.delayed(const Duration(milliseconds: 500), _nextQuestion);
       } else {
-        _showAllTranslations =
-            true; // Show all translations for incorrect answers
+        _showAllTranslations = true;
       }
     });
   }
@@ -2490,12 +2568,10 @@ class _QuizPageState extends State<QuizPage> {
     if (current > 0) {
       setState(() {
         current--;
-        // When going back, show the answer state if it was already answered
         _showAnswer = userAnswers[current] != -1;
         _selectedIndex =
             userAnswers[current] != -1 ? userAnswers[current] : null;
         _isProcessing = false;
-        // Show translations if this question was answered incorrectly
         _showAllTranslations = _showAnswer &&
             _selectedIndex != null &&
             optionsList[current][_selectedIndex!].english !=
@@ -2537,16 +2613,14 @@ class _QuizPageState extends State<QuizPage> {
       favs.add(english);
       await prefs.setStringList('favorite_words', favs);
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('已加入收藏')));
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('已加入收藏')));
       }
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    if (quizWords.isEmpty) {
+    if (quizWords.isEmpty || optionsList.isEmpty) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
@@ -2611,9 +2685,7 @@ class _QuizPageState extends State<QuizPage> {
                           }
                         } else if (isSelected) {
                           boxShadow = BoxShadow(
-                            color: Theme.of(
-                              context,
-                            ).primaryColor.withOpacity(0.3),
+                            color: Theme.of(context).primaryColor.withOpacity(0.3),
                             blurRadius: 8,
                             spreadRadius: 1,
                           );
@@ -2692,7 +2764,6 @@ class _QuizPageState extends State<QuizPage> {
                       }),
                     ),
                   ),
-                  // Navigation buttons - moved up just below options
                   Padding(
                     padding: const EdgeInsets.only(top: 8.0, bottom: 16.0),
                     child: Row(
@@ -2751,7 +2822,6 @@ class QuizResultsPage extends StatelessWidget {
     required this.quizType,
   });
 
-  @override
   Widget build(BuildContext context) {
     int score = 0;
     for (int i = 0; i < quizWords.length; i++) {
@@ -2933,10 +3003,23 @@ class _AllWordsPageState extends State<AllWordsPage> {
   }
 
   Future<void> _initTts() async {
-        final settings = SettingsProvider.of(context);
+    final settings = SettingsProvider.of(context);
     await flutterTts.setLanguage("en-US");
     await flutterTts.setSpeechRate(settings.speechRate);
     await flutterTts.setPitch(settings.speechPitch);
+    await flutterTts.setVolume(settings.speechVolume);
+    
+    // Configure audio session to not pause background music
+    await flutterTts.setIosAudioCategory(
+      IosTextToSpeechAudioCategory.playback,
+      [
+        IosTextToSpeechAudioCategoryOptions.allowBluetooth,
+        IosTextToSpeechAudioCategoryOptions.allowBluetoothA2DP,
+        IosTextToSpeechAudioCategoryOptions.mixWithOthers,
+      ],
+      IosTextToSpeechAudioMode.spokenAudio,
+    );
+    
     if (settings.ttsVoice != null) {
       await flutterTts.setVoice(settings.ttsVoice!);
     }
@@ -2980,7 +3063,7 @@ class _AllWordsPageState extends State<AllWordsPage> {
 
   // New method to handle Enter key press
   void _onSearchSubmitted(String query) {
-    final trimmedQuery = query.toLowerCase().trim();
+    final trimmedQuery = query.trim();
     if (trimmedQuery.isNotEmpty && _filteredWords.isEmpty) {
       // Only show Cambridge dictionary dialog when Enter is pressed and no results found
       showDialog(
@@ -2996,6 +3079,7 @@ class _AllWordsPageState extends State<AllWordsPage> {
             TextButton(
               onPressed: () {
                 Navigator.pop(context);
+                // Use original query for dictionary search (preserve case for proper search)
                 _launchURL(trimmedQuery);
               },
               child: const Text('前往劍橋辭典'),
@@ -3008,32 +3092,56 @@ class _AllWordsPageState extends State<AllWordsPage> {
 
   void _filterAndSortWords() {
     List<Word> tempWords = List.from(_allWords);
-    final query = _searchController.text.toLowerCase();
+    final query = _searchController.text.toLowerCase().trim();
 
     // First, filter the words based on the search query
     if (query.isNotEmpty) {
       tempWords = tempWords
-          .where((word) => word.english.toLowerCase().contains(query))
+          .where((word) => 
+              word.english.toLowerCase().contains(query) ||
+              word.chinese.contains(query))
           .toList();
 
-      // For search results, sort by relevance (exact match first, then starts with, then contains)
+      // For search results, sort by relevance
       tempWords.sort((a, b) {
         String aLower = a.english.toLowerCase();
         String bLower = b.english.toLowerCase();
+        String aChinese = a.chinese;
+        String bChinese = b.chinese;
 
-        // Exact match gets highest priority
-        bool aExact = aLower == query;
-        bool bExact = bLower == query;
-        if (aExact && !bExact) return -1;
-        if (!aExact && bExact) return 1;
+        // Check if query matches English or Chinese
+        bool aEnglishMatch = aLower.contains(query);
+        bool bEnglishMatch = bLower.contains(query);
 
-        // Words starting with query get second priority
-        bool aStarts = aLower.startsWith(query);
-        bool bStarts = bLower.startsWith(query);
-        if (aStarts && !bStarts) return -1;
-        if (!aStarts && bStarts) return 1;
+        // Exact English match gets highest priority
+        bool aExactEnglish = aLower == query;
+        bool bExactEnglish = bLower == query;
+        if (aExactEnglish && !bExactEnglish) return -1;
+        if (!aExactEnglish && bExactEnglish) return 1;
 
-        // For words with same relevance, sort alphabetically
+        // Exact Chinese match gets second priority
+        bool aExactChinese = aChinese == query;
+        bool bExactChinese = bChinese == query;
+        if (aExactChinese && !bExactChinese) return -1;
+        if (!aExactChinese && bExactChinese) return 1;
+
+        // English starts with query gets third priority
+        bool aStartsEnglish = aLower.startsWith(query);
+        bool bStartsEnglish = bLower.startsWith(query);
+        if (aStartsEnglish && !bStartsEnglish) return -1;
+        if (!aStartsEnglish && bStartsEnglish) return 1;
+
+        // Chinese starts with query gets fourth priority
+        bool aStartsChinese = aChinese.startsWith(query);
+        bool bStartsChinese = bChinese.startsWith(query);
+        if (aStartsChinese && !bStartsChinese) return -1;
+        if (!aStartsChinese && bStartsChinese) return 1;
+
+        // If both have same type of match, prefer English matches
+        if (aEnglishMatch && !bEnglishMatch) return -1;
+        if (!aEnglishMatch && bEnglishMatch) return 1;
+
+        // For words with same relevance, sort alphabetically by English
         return aLower.compareTo(bLower);
       });
     } else {
@@ -3104,7 +3212,7 @@ class _AllWordsPageState extends State<AllWordsPage> {
               controller: _searchController,
               decoration: InputDecoration(
                 labelText: '搜尋單字',
-                hintText: '輸入單字後按 Enter 搜尋',
+                hintText: '輸入英文或中文後按 Enter 搜尋',
                 prefixIcon: const Icon(Icons.search),
                 suffixIcon: _searchController.text.isNotEmpty
                     ? IconButton(
