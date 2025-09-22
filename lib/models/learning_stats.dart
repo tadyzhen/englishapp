@@ -10,6 +10,7 @@ class LearningStats {
   final List<Achievement> achievements;
   final Map<String, int> dailyStudyTime; // 日期 -> 學習時間(分鐘)
   final Map<String, int> weeklyProgress; // 週 -> 學習單字數
+  final Map<String, int> dailyWordsLearned; // 日期 -> 學到的單字數
   final int totalQuizzesTaken;
   final double averageQuizScore;
   final int totalFavorites;
@@ -24,6 +25,7 @@ class LearningStats {
     required this.achievements,
     required this.dailyStudyTime,
     required this.weeklyProgress,
+    required this.dailyWordsLearned,
     required this.totalQuizzesTaken,
     required this.averageQuizScore,
     required this.totalFavorites,
@@ -40,6 +42,7 @@ class LearningStats {
       achievements: [],
       dailyStudyTime: {},
       weeklyProgress: {},
+      dailyWordsLearned: {},
       totalQuizzesTaken: 0,
       averageQuizScore: 0.0,
       totalFavorites: 0,
@@ -57,6 +60,7 @@ class LearningStats {
       'achievements': achievements.map((a) => a.toJson()).toList(),
       'dailyStudyTime': dailyStudyTime,
       'weeklyProgress': weeklyProgress,
+      'dailyWordsLearned': dailyWordsLearned,
       'totalQuizzesTaken': totalQuizzesTaken,
       'averageQuizScore': averageQuizScore,
       'totalFavorites': totalFavorites,
@@ -77,6 +81,7 @@ class LearningStats {
           .toList(),
       dailyStudyTime: Map<String, int>.from(json['dailyStudyTime'] ?? {}),
       weeklyProgress: Map<String, int>.from(json['weeklyProgress'] ?? {}),
+      dailyWordsLearned: Map<String, int>.from(json['dailyWordsLearned'] ?? {}),
       totalQuizzesTaken: json['totalQuizzesTaken'] ?? 0,
       averageQuizScore: (json['averageQuizScore'] ?? 0.0).toDouble(),
       totalFavorites: json['totalFavorites'] ?? 0,
@@ -93,6 +98,7 @@ class LearningStats {
     List<Achievement>? achievements,
     Map<String, int>? dailyStudyTime,
     Map<String, int>? weeklyProgress,
+    Map<String, int>? dailyWordsLearned,
     int? totalQuizzesTaken,
     double? averageQuizScore,
     int? totalFavorites,
@@ -107,6 +113,7 @@ class LearningStats {
       achievements: achievements ?? this.achievements,
       dailyStudyTime: dailyStudyTime ?? this.dailyStudyTime,
       weeklyProgress: weeklyProgress ?? this.weeklyProgress,
+      dailyWordsLearned: dailyWordsLearned ?? this.dailyWordsLearned,
       totalQuizzesTaken: totalQuizzesTaken ?? this.totalQuizzesTaken,
       averageQuizScore: averageQuizScore ?? this.averageQuizScore,
       totalFavorites: totalFavorites ?? this.totalFavorites,

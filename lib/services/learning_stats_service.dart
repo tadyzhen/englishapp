@@ -4,6 +4,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../models/learning_stats.dart';
 import '../firestore_sync.dart';
+// import 'package:flutter/material.dart';
 
 class LearningStatsService {
   static const String _statsKey = 'learning_stats';
@@ -106,18 +107,28 @@ class LearningStatsService {
       final weeklyProgress = Map<String, int>.from(updatedStats.weeklyProgress);
       weeklyProgress[weeklyKey] = (weeklyProgress[weeklyKey] ?? 0) + wordsLearned;
 
+      // 更新每日學到的單字數
+      final dailyWords = Map<String, int>.from(updatedStats.dailyWordsLearned);
+      dailyWords[dailyKey] = (dailyWords[dailyKey] ?? 0) + wordsLearned;
+
       final finalStats = updatedStats.copyWith(
         currentStreak: streak,
         longestStreak: longestStreak,
         levelStats: newLevelStats,
         dailyStudyTime: dailyStudyTime,
         weeklyProgress: weeklyProgress,
+        dailyWordsLearned: dailyWords,
       );
 
       await saveLearningStats(finalStats);
       
       // 檢查成就
       await _checkAchievements(finalStats);
+
+      // 重新安排提醒（若設定了每日目標與提醒時間）
+      try {
+        // We don't have BuildContext here; caller should trigger reschedule when possible.
+      } catch (_) {}
     } catch (e) {
       print('Error updating learning progress: $e');
     }
@@ -220,6 +231,15 @@ class LearningStatsService {
     } catch (e) {
       print('Error getting learning trends: $e');
       return {};
+    }
+  }
+
+  // 提供統一方法，給統計頁讀取完整使用者資料（含測驗紀錄）
+  static Future<Map<String, dynamic>?> downloadFullUserData() async {
+    try {
+      return await FirestoreSync.downloadUserData();
+    } catch (e) {
+      return null;
     }
   }
 

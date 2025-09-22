@@ -13,6 +13,7 @@ import 'dictionary_webview.dart';
 import 'screens/modern_login_screen.dart';
 import 'screens/main_navigation.dart';
 import 'services/learning_stats_service.dart';
+import 'services/notifications_service.dart';
 
 // Utility class for shared functionality
 class AppUtils {
@@ -41,6 +42,8 @@ class AppSettings extends ChangeNotifier {
   double speechPitch;
   double speechVolume;
   Map<String, String>? ttsVoice;
+  int dailyGoal; // 每日單字目標
+  String? reminderTime; // HH:mm
 
   AppSettings({
     required this.themeMode,
@@ -49,6 +52,8 @@ class AppSettings extends ChangeNotifier {
     this.speechPitch = 1.0,
     this.speechVolume = 1.0,
     this.ttsVoice,
+    this.dailyGoal = 0,
+    this.reminderTime,
   });
 
   void setThemeMode(ThemeMode mode) async {
@@ -93,6 +98,28 @@ class AppSettings extends ChangeNotifier {
     prefs.setString('ttsVoice', json.encode(voice));
   }
 
+  void setDailyGoal(int goal) async {
+    dailyGoal = goal;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('dailyGoal', goal);
+  }
+
+  void setReminderTime(TimeOfDay? time) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (time == null) {
+      reminderTime = null;
+      await prefs.remove('reminderTime');
+      await NotificationsService.cancelDailyReminder();
+    } else {
+      reminderTime = '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
+      await prefs.setString('reminderTime', reminderTime!);
+      // Schedule with placeholder remaining (will be rescheduled when progress updates)
+      await NotificationsService.scheduleDailyReminder(time: time, remainingWords: 0);
+    }
+    notifyListeners();
+  }
+
   static Future<AppSettings> load() async {
     final prefs = await SharedPreferences.getInstance();
     String theme = prefs.getString('themeMode') ?? 'light';
@@ -100,6 +127,8 @@ class AppSettings extends ChangeNotifier {
     double speechRate = prefs.getDouble('speechRate') ?? 0.4;
     double speechPitch = prefs.getDouble('speechPitch') ?? 1.0;
     double speechVolume = prefs.getDouble('speechVolume') ?? 1.0;
+    int dailyGoal = prefs.getInt('dailyGoal') ?? 0;
+    String? reminderTime = prefs.getString('reminderTime');
     Map<String, String>? ttsVoice;
     String? voiceString = prefs.getString('ttsVoice');
     if (voiceString != null) {
@@ -113,6 +142,8 @@ class AppSettings extends ChangeNotifier {
       speechPitch: speechPitch,
       speechVolume: speechVolume,
       ttsVoice: ttsVoice,
+      dailyGoal: dailyGoal,
+      reminderTime: reminderTime,
     );
   }
 }
@@ -138,6 +169,13 @@ void main() async {
     debugPrint('Firebase initialized successfully');
   } catch (e) {
     debugPrint('Error initializing Firebase: $e');
+  }
+
+  // Init notifications
+  try {
+    await NotificationsService.init();
+  } catch (e) {
+    debugPrint('Error initializing notifications: $e');
   }
 
   // Start the app after Firebase is ready
@@ -925,11 +963,13 @@ class _QuizOptionsPageState extends State<QuizOptionsPage> {
   String? selectedLevel = '全部';
   int questionCount = 10;
   int maxQuestions = 10;
-  String quizType = 'ch2en';
+  String quizType = 'ch2en'; // ch2en, en2ch, listening, fillin
   final TextEditingController countController = TextEditingController(text: '10');
   List<String> letters = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 
                          'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z', '全部'];
   String? selectedLetter = '全部';
+  bool useFavorites = false; // 來源：收藏
+  bool _immediateAnswer = false; // 立刻顯示答案
 
   @override
   void initState() {
@@ -979,6 +1019,13 @@ class _QuizOptionsPageState extends State<QuizOptionsPage> {
     String data = await rootBundle.loadString('assets/words.json');
     List<dynamic> jsonResult = json.decode(data);
     List<Word> all = jsonResult.map((item) => Word.fromJson(item)).toList();
+    
+    // If use favorites, narrow pool first
+    if (useFavorites) {
+      final prefs = await SharedPreferences.getInstance();
+      final favs = prefs.getStringList('favorite_words') ?? <String>[];
+      all = all.where((w) => favs.contains(w.english)).toList();
+    }
     
     // 過濾單字
     List<Word> filtered = all.where((w) {
@@ -1031,6 +1078,7 @@ class _QuizOptionsPageState extends State<QuizOptionsPage> {
           questionCount: finalQuestionCount,
           quizSubset: filtered,
           letter: letter,
+          showImmediateAnswer: _immediateAnswer,
         ),
       ),
     );
@@ -1120,8 +1168,37 @@ class _QuizOptionsPageState extends State<QuizOptionsPage> {
               groupValue: quizType,
               onChanged: (v) => setState(() => quizType = v!),
             ),
+            RadioListTile<String>(
+              title: const Text('聽力測驗（聽發音選答案）'),
+              value: 'listening',
+              groupValue: quizType,
+              onChanged: (v) => setState(() => quizType = v!),
+            ),
+            RadioListTile<String>(
+              title: const Text('填空測驗（補齊英文）'),
+              value: 'fillin',
+              groupValue: quizType,
+              onChanged: (v) => setState(() => quizType = v!),
+            ),
+            const SizedBox(height: 8),
+            SwitchListTile(
+              title: const Text('立刻顯示答案'),
+              subtitle: const Text('作答後立即顯示正確答案'),
+              value: _immediateAnswer,
+              onChanged: (v) => setState(() => _immediateAnswer = v),
+            ),
             const SizedBox(height: 12),
-            const Text('4. 選擇測驗字母', style: TextStyle(fontWeight: FontWeight.bold)),
+            const Text('4. 題庫來源', style: TextStyle(fontWeight: FontWeight.bold)),
+            SwitchListTile(
+              title: const Text('使用收藏的單字'),
+              subtitle: const Text('開啟後僅從收藏中出題（可再套用等級/字母條件）'),
+              value: useFavorites,
+              onChanged: (v) async {
+                setState(() => useFavorites = v);
+                await _updateMaxQuestions();
+              },
+            ),
+            const Text('5. 選擇測驗字母', style: TextStyle(fontWeight: FontWeight.bold)),
             FutureBuilder(
               future: _getLetters(),
               builder: (context, snapshot) {
@@ -1291,6 +1368,78 @@ class _SettingsDialogState extends State<SettingsDialog> {
                   onChanged: (mode) {
                     if (mode != null) settings.setThemeMode(mode);
                   },
+                ),
+              ],
+            ),
+            const Divider(),
+            // Daily Goal
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('每日目標 (單字數)', style: TextStyle(fontSize: 18)),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Slider(
+                        value: settings.dailyGoal.toDouble(),
+                        min: 0,
+                        max: 200,
+                        divisions: 200,
+                        label: settings.dailyGoal.toString(),
+                        onChanged: (v) => settings.setDailyGoal(v.toInt()),
+                      ),
+                    ),
+                    SizedBox(
+                      width: 56,
+                      child: Text(
+                        settings.dailyGoal.toString(),
+                        textAlign: TextAlign.end,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+            const Divider(),
+            // Reminder Time
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('提醒時間', style: TextStyle(fontSize: 18)),
+                const SizedBox(height: 8),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      settings.reminderTime != null
+                          ? '每天 ${settings.reminderTime}'
+                          : '未設定',
+                    ),
+                    Row(
+                      children: [
+                        TextButton(
+                          onPressed: () async {
+                            final now = TimeOfDay.now();
+                            final picked = await showTimePicker(
+                              context: context,
+                              initialTime: now,
+                            );
+                            if (picked != null) {
+                              settings.setReminderTime(picked);
+                            }
+                          },
+                          child: const Text('設定'),
+                        ),
+                        if (settings.reminderTime != null)
+                          TextButton(
+                            onPressed: () async {
+                              settings.setReminderTime(null);
+                            },
+                            child: const Text('清除'),
+                          ),
+                      ],
+                    ),
+                  ],
                 ),
               ],
             ),
@@ -1475,6 +1624,9 @@ class _WordQuizPageState extends State<WordQuizPage> {
   bool _isPressed = false;
   Timer? _longPressTimer;
   bool showCompletionPanel = false;
+  String _getDateKey(DateTime date) {
+    return '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+  }
 
 
   // Open Cambridge Dictionary for the current word in WebView
@@ -1710,6 +1862,23 @@ class _WordQuizPageState extends State<WordQuizPage> {
         correctAnswers: 1,
         totalAnswers: 1,
       );
+
+      // Reschedule reminder with remaining words
+      try {
+        final settings = SettingsProvider.of(context);
+        if (settings.dailyGoal > 0 && settings.reminderTime != null) {
+          final stats = await LearningStatsService.getLearningStats();
+          final todayKey = _getDateKey(DateTime.now());
+          final learnedToday = stats.dailyWordsLearned[todayKey] ?? 0;
+          final remaining = (settings.dailyGoal - learnedToday).clamp(0, 100000);
+          final parts = settings.reminderTime!.split(':');
+          final time = TimeOfDay(hour: int.parse(parts[0]), minute: int.parse(parts[1]));
+          await NotificationsService.scheduleDailyReminder(
+            time: time,
+            remainingWords: remaining,
+          );
+        }
+      } catch (_) {}
     }
 
     // Auto-speak immediately if enabled
@@ -2454,6 +2623,7 @@ class QuizPage extends StatefulWidget {
   final int? questionCount;
   final List<Word>? quizSubset; // if provided, quiz only these words
   final String? letter; // optional letter filter for level
+  final bool showImmediateAnswer;
   const QuizPage({
     super.key,
     required this.type,
@@ -2461,6 +2631,7 @@ class QuizPage extends StatefulWidget {
     this.questionCount,
     this.quizSubset,
     this.letter,
+    this.showImmediateAnswer = false,
   });
   @override
   State<QuizPage> createState() => _QuizPageState();
@@ -2471,6 +2642,7 @@ class _QuizPageState extends State<QuizPage> {
   List<Word> quizWords = [];
   int current = 0;
   int score = 0;
+  DateTime? _startTime;
   List<int> userAnswers = [];
   List<List<Word>> optionsList = [];
   bool _isProcessing = false;
@@ -2478,10 +2650,14 @@ class _QuizPageState extends State<QuizPage> {
   bool _isAnswerCorrect = false;
   int? _selectedIndex;
   bool _showAllTranslations = false;
+  final TextEditingController _inputController = TextEditingController();
+  late FlutterTts _tts;
 
   @override
   void initState() {
     super.initState();
+    _tts = FlutterTts();
+    _startTime = DateTime.now();
     loadQuiz();
   }
 
@@ -2569,12 +2745,26 @@ class _QuizPageState extends State<QuizPage> {
         userAnswers[current] = selectedIndex;
       }
 
-      if (_isAnswerCorrect) {
-        _showAllTranslations = false;
-        Future.delayed(const Duration(milliseconds: 500), _nextQuestion);
-      } else {
+      if (_isAnswerCorrect || widget.showImmediateAnswer) {
         _showAllTranslations = true;
+        Future.delayed(const Duration(milliseconds: 500), _nextQuestion);
       }
+    });
+  }
+
+  void _handleSpellingFillinSubmit(Word word) {
+    if (_isProcessing || _showAnswer) return;
+    final input = _inputController.text.trim();
+    final correct = word.english.split('/').first.trim();
+    final isCorrect = input.toLowerCase() == correct.toLowerCase();
+    setState(() {
+      _showAnswer = true;
+      _isAnswerCorrect = isCorrect;
+      if (isCorrect) score++;
+    });
+    Future.delayed(const Duration(milliseconds: 700), () {
+      _inputController.clear();
+      _nextQuestion();
     });
   }
 
@@ -2594,7 +2784,7 @@ class _QuizPageState extends State<QuizPage> {
     }
   }
 
-  void _nextQuestion() {
+  Future<void> _nextQuestion() async {
     if (!mounted) return;
 
     if (current < quizWords.length - 1) {
@@ -2605,16 +2795,24 @@ class _QuizPageState extends State<QuizPage> {
         _isProcessing = false;
         _showAllTranslations = false;
       });
+      if (widget.type == 'listening') {
+        await _tts.setLanguage('en-US');
+        await _tts.speak(quizWords[current].english.replaceAll('/', ' '));
+      }
     } else {
-      // Calculate quiz results before navigating
+      // Calculate quiz results before navigating (supports objective modes)
       int correctAnswers = 0;
-      for (int i = 0; i < quizWords.length; i++) {
-        if (userAnswers[i] >= 0) {
-          final correctIdx = optionsList[i].indexWhere(
-            (w) => w.english == quizWords[i].english,
-          );
-          if (userAnswers[i] == correctIdx) {
-            correctAnswers++;
+      if (widget.type == 'spelling' || widget.type == 'fillin') {
+        correctAnswers = score; // score already updated on submit
+      } else {
+        for (int i = 0; i < quizWords.length; i++) {
+          if (userAnswers[i] >= 0) {
+            final correctIdx = optionsList[i].indexWhere(
+              (w) => w.english == quizWords[i].english,
+            );
+            if (userAnswers[i] == correctIdx) {
+              correctAnswers++;
+            }
           }
         }
       }
@@ -2626,6 +2824,25 @@ class _QuizPageState extends State<QuizPage> {
         totalQuestions: quizWords.length,
         studyTimeMinutes: 5, // Estimate 5 minutes per quiz
       );
+
+      // Save quiz history to Firestore
+      try {
+        final started = _startTime ?? DateTime.now();
+        final ended = DateTime.now();
+        final record = {
+          'type': widget.type,
+          'level': widget.level,
+          'letter': widget.letter,
+          'questionCount': quizWords.length,
+          'score': correctAnswers,
+          'startedAt': started.toIso8601String(),
+          'endedAt': ended.toIso8601String(),
+          'durationSeconds': ended.difference(started).inSeconds,
+          'usedFavorites': (widget.quizSubset != null && widget.quizSubset!.isNotEmpty) ? null : null,
+          'timestamp': DateTime.now().toIso8601String(),
+        };
+        await FirestoreSync.uploadQuizRecord(record);
+      } catch (_) {}
 
       Navigator.pushReplacement(
         context,
@@ -2672,6 +2889,15 @@ class _QuizPageState extends State<QuizPage> {
             onPressed: _resetQuiz,
             tooltip: '重新開始測驗',
           ),
+          if (widget.type == 'listening')
+            IconButton(
+              icon: const Icon(Icons.volume_up),
+              onPressed: () async {
+                await _tts.setLanguage('en-US');
+                await _tts.speak(word.english.replaceAll('/', ' '));
+              },
+              tooltip: '播放發音',
+            ),
         ],
       ),
       body: Column(
@@ -2682,15 +2908,58 @@ class _QuizPageState extends State<QuizPage> {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Text(
-                    widget.type == 'ch2en' ? word.chinese : word.english,
-                    style: const TextStyle(
-                      fontSize: 24,
-                      fontWeight: FontWeight.bold,
+                  if (widget.type == 'ch2en' || widget.type == 'en2ch')
+                    Text(
+                      widget.type == 'ch2en' ? word.chinese : word.english,
+                      style: const TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.bold,
+                      ),
+                      textAlign: TextAlign.center,
                     ),
-                    textAlign: TextAlign.center,
-                  ),
+                  if (widget.type == 'fillin')
+                    Column(
+                      children: [
+                        Text(
+                          word.chinese,
+                          style: const TextStyle(
+                            fontSize: 22,
+                            fontWeight: FontWeight.bold,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: 16),
+                        Builder(builder: (_) {
+                          final eng = word.english.split('/').first.trim();
+                          if (eng.length >= 2) {
+                            final masked = eng.length <= 4
+                                ? '${eng[0]}${"_" * (eng.length - 2)}${eng[eng.length - 1]}'
+                                : '${eng.substring(0, 2)}${"_" * (eng.length - 4)}${eng.substring(eng.length - 2)}';
+                            return Text('提示: $masked', style: const TextStyle(color: Colors.grey));
+                          }
+                          return const SizedBox.shrink();
+                        }),
+                        const SizedBox(height: 8),
+                        TextField(
+                          controller: _inputController,
+                          textAlign: TextAlign.center,
+                          decoration: const InputDecoration(
+                            hintText: '輸入英文答案',
+                            border: OutlineInputBorder(),
+                          ),
+                          onSubmitted: (_) {
+                            _handleSpellingFillinSubmit(word);
+                          },
+                        ),
+                        const SizedBox(height: 8),
+                        ElevatedButton(
+                          onPressed: () => _handleSpellingFillinSubmit(word),
+                          child: const Text('送出'),
+                        ),
+                      ],
+                    ),
                   const SizedBox(height: 32),
+                  if (widget.type == 'ch2en' || widget.type == 'en2ch' || widget.type == 'listening')
                   Expanded(
                     child: GridView.count(
                       crossAxisCount: 2,

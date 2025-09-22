@@ -19,7 +19,7 @@ class _LearningStatsScreenState extends State<LearningStatsScreen>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
+    _tabController = TabController(length: 4, vsync: this);
     _loadStats();
   }
 
@@ -78,6 +78,7 @@ class _LearningStatsScreenState extends State<LearningStatsScreen>
             Tab(text: '總覽', icon: Icon(Icons.dashboard)),
             Tab(text: '進度', icon: Icon(Icons.trending_up)),
             Tab(text: '成就', icon: Icon(Icons.emoji_events)),
+            Tab(text: '歷史', icon: Icon(Icons.history)),
           ],
         ),
       ),
@@ -87,6 +88,7 @@ class _LearningStatsScreenState extends State<LearningStatsScreen>
           _buildOverviewTab(),
           _buildProgressTab(),
           _buildAchievementsTab(),
+          _buildHistoryTab(),
         ],
       ),
     );
@@ -624,5 +626,75 @@ class _LearningStatsScreenState extends State<LearningStatsScreen>
             : const Icon(Icons.lock, color: Colors.grey),
       ),
     );
+  }
+
+  Widget _buildHistoryTab() {
+    return FutureBuilder<List<Map<String, dynamic>>>(
+      future: _loadQuizHistory(),
+      builder: (context, snapshot) {
+        if (!snapshot.hasData) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        final history = snapshot.data!;
+        if (history.isEmpty) {
+          return const Center(child: Text('尚無測驗紀錄'));
+        }
+        return ListView.separated(
+          itemCount: history.length,
+          separatorBuilder: (_, __) => const Divider(height: 1),
+          itemBuilder: (context, idx) {
+            final item = history[idx];
+            final type = item['type'] ?? '';
+            final level = item['level'] ?? '-';
+            final score = item['score'] ?? 0;
+            final total = item['questionCount'] ?? 0;
+            final startedAt = DateTime.tryParse(item['startedAt'] ?? '') ?? DateTime.now();
+            final duration = (item['durationSeconds'] ?? 0) as int;
+            return ListTile(
+              leading: const Icon(Icons.quiz),
+              title: Text('${_formatQuizType(type)}  等級: ${level ?? '全部'}'),
+              subtitle: Text(
+                '${_formatDateTime(startedAt)}  |  成績: $score/$total  |  ${duration}s',
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> _loadQuizHistory() async {
+    try {
+      // FirestoreSync already exposes fetching in downloadUserData; implement a lightweight query here later
+      // For now, pull the latest from downloadUserData
+      final data = await LearningStatsService.downloadFullUserData();
+      final list = (data?['quizRecords'] as List<dynamic>? ?? [])
+          .cast<Map<String, dynamic>>();
+      list.sort((a, b) => (b['timestamp'] ?? '').compareTo(a['timestamp'] ?? ''));
+      return list.take(50).toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  String _formatQuizType(String type) {
+    switch (type) {
+      case 'ch2en':
+        return '中譯英';
+      case 'en2ch':
+        return '英譯中';
+      case 'listening':
+        return '聽力測驗';
+      case 'spelling':
+        return '拼字測驗';
+      case 'fillin':
+        return '填空測驗';
+      default:
+        return type;
+    }
+  }
+
+  String _formatDateTime(DateTime dt) {
+    return '${dt.year}/${dt.month.toString().padLeft(2, '0')}/${dt.day.toString().padLeft(2, '0')} ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
   }
 }

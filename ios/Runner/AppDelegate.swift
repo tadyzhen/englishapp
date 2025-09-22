@@ -1,6 +1,7 @@
 import Flutter
 import UIKit
 import GoogleSignIn
+import AVFoundation
 
 @main
 @objc class AppDelegate: FlutterAppDelegate {
@@ -15,6 +16,15 @@ import GoogleSignIn
        let plist = NSDictionary(contentsOfFile: path),
        let clientId = plist["CLIENT_ID"] as? String {
       GIDSignIn.sharedInstance.configuration = GIDConfiguration(clientID: clientId)
+    }
+    
+    // Configure AVAudioSession to allow mixing with other audio (do not pause music)
+    do {
+      let session = AVAudioSession.sharedInstance()
+      try session.setCategory(.playback, options: [.mixWithOthers])
+      try session.setActive(true)
+    } catch {
+      // Ignore errors to avoid crashing if unavailable
     }
     
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
