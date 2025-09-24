@@ -21,10 +21,14 @@ class _LearningStatsScreenState extends State<LearningStatsScreen>
     super.initState();
     _tabController = TabController(length: 4, vsync: this);
     _loadStats();
+
+    // 監聽統計資料變更，自動刷新
+    LearningStatsService.statsVersion.addListener(_loadStats);
   }
 
   @override
   void dispose() {
+    LearningStatsService.statsVersion.removeListener(_loadStats);
     _tabController.dispose();
     super.dispose();
   }
@@ -72,6 +76,13 @@ class _LearningStatsScreenState extends State<LearningStatsScreen>
     return Scaffold(
       appBar: AppBar(
         title: const Text('學習統計'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: _loadStats,
+            tooltip: '重新整理',
+          ),
+        ],
         bottom: TabBar(
           controller: _tabController,
           tabs: const [
@@ -123,6 +134,18 @@ class _LearningStatsScreenState extends State<LearningStatsScreen>
       childAspectRatio: 1.3, // 增加高度比例
       children: [
         _buildStatCard(
+          '今日學習單字',
+          '${_todayWordsLearned()}',
+          Icons.today,
+          Colors.teal,
+        ),
+        _buildStatCard(
+          '今日學習時間',
+          '${_todayStudyMinutes()} 分鐘',
+          Icons.timer,
+          Colors.indigo,
+        ),
+        _buildStatCard(
           '總學習單字',
           '${_stats!.totalWordsLearned}',
           Icons.book,
@@ -149,6 +172,18 @@ class _LearningStatsScreenState extends State<LearningStatsScreen>
       ],
     );
   }
+
+  int _todayWordsLearned() {
+    final key = _dateKey(DateTime.now());
+    return _stats!.dailyWordsLearned[key] ?? 0;
+  }
+
+  int _todayStudyMinutes() {
+    final key = _dateKey(DateTime.now());
+    return _stats!.dailyStudyTime[key] ?? 0;
+  }
+
+  String _dateKey(DateTime d) => '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
 
   Widget _buildStatCard(String title, String value, IconData icon, Color color) {
     return Card(

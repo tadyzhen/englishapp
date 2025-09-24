@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -9,6 +10,7 @@ import '../firestore_sync.dart';
 class LearningStatsService {
   static const String _statsKey = 'learning_stats';
   static final FirebaseFirestore _db = FirebaseFirestore.instance;
+  static final ValueNotifier<int> statsVersion = ValueNotifier<int>(0);
 
   // 獲取學習統計數據
   static Future<LearningStats> getLearningStats() async {
@@ -18,7 +20,8 @@ class LearningStatsService {
       final localStats = prefs.getString(_statsKey);
       
       if (localStats != null) {
-        final stats = LearningStats.fromJson(json.decode(localStats));
+        var stats = await _ensureAchievementsCatalog(LearningStats.fromJson(json.decode(localStats)));
+        stats = await _reconcileWithCloudKnownWords(stats);
         
         // 嘗試從雲端同步
         await _syncFromCloud();
@@ -26,14 +29,19 @@ class LearningStatsService {
         // 重新從本地讀取（可能已被雲端數據更新）
         final updatedStats = prefs.getString(_statsKey);
         if (updatedStats != null) {
-          return LearningStats.fromJson(json.decode(updatedStats));
+          var refreshed = await _ensureAchievementsCatalog(LearningStats.fromJson(json.decode(updatedStats)));
+          refreshed = await _reconcileWithCloudKnownWords(refreshed);
+          return refreshed;
         }
         
         return stats;
       }
       
       // 如果本地沒有數據，嘗試從雲端獲取
-      return await _loadFromCloud();
+      var cloud = await _loadFromCloud();
+      cloud = await _ensureAchievementsCatalog(cloud);
+      cloud = await _reconcileWithCloudKnownWords(cloud);
+      return cloud;
     } catch (e) {
       print('Error loading learning stats: $e');
       return LearningStats.empty();
@@ -48,6 +56,11 @@ class LearningStatsService {
       
       // 同步到雲端
       await _syncToCloud(stats);
+
+      // 通知觀察者有更新
+      try {
+        statsVersion.value = statsVersion.value + 1;
+      } catch (_) {}
     } catch (e) {
       print('Error saving learning stats: $e');
     }
@@ -120,10 +133,9 @@ class LearningStatsService {
         dailyWordsLearned: dailyWords,
       );
 
-      await saveLearningStats(finalStats);
-      
-      // 檢查成就
-      await _checkAchievements(finalStats);
+      // 構建成就清單（包含未解鎖進度）並儲存
+      final withAchievements = await _buildAchievementsWithProgress(finalStats);
+      await saveLearningStats(withAchievements);
 
       // 重新安排提醒（若設定了每日目標與提醒時間）
       try {
@@ -285,14 +297,64 @@ class LearningStatsService {
       
       if (data != null && data['learningStats'] != null) {
         final stats = LearningStats.fromJson(data['learningStats']);
-        await saveLearningStats(stats);
-        return stats;
+        final ensured = await _ensureAchievementsCatalog(stats);
+        final reconciled = await _reconcileWithCloudKnownWords(ensured);
+        await saveLearningStats(reconciled);
+        return reconciled;
       }
       
       return LearningStats.empty();
     } catch (e) {
       print('Error loading from cloud: $e');
       return LearningStats.empty();
+    }
+  }
+
+  // 將雲端 knownByLevel 的已學單字數整合進本地統計，避免只計入登入後的新學單字
+  static Future<LearningStats> _reconcileWithCloudKnownWords(LearningStats stats) async {
+    try {
+      final knownByLevel = await FirestoreSync.getKnownByLevel();
+      if (knownByLevel.isEmpty) return stats;
+
+      // 計算各等級的雲端學習數
+      final Map<String, int> cloudCounts = {};
+      knownByLevel.forEach((level, list) {
+        if (level == '_legacy') return; // 跳過舊版合併鍵
+        cloudCounts[level] = list.length;
+      });
+
+      if (cloudCounts.isEmpty) return stats;
+
+      // 更新等級統計 wordsLearned 為雲端最大值，避免回退
+      final newLevelStats = Map<String, LevelStats>.from(stats.levelStats);
+      int cloudTotal = 0;
+      for (final entry in cloudCounts.entries) {
+        final levelKey = entry.key;
+        final count = entry.value;
+        cloudTotal += count;
+        final existing = newLevelStats[levelKey] ?? LevelStats(
+          level: levelKey,
+          wordsLearned: 0,
+          totalWords: 0,
+          studyTime: 0,
+          accuracy: 0.0,
+          lastStudied: stats.lastStudyDate,
+        );
+        newLevelStats[levelKey] = existing.copyWith(
+          wordsLearned: count > existing.wordsLearned ? count : existing.wordsLearned,
+          totalWords: existing.totalWords == 0 ? existing.totalWords : existing.totalWords,
+        );
+      }
+
+      // 若雲端總數較大，提升 totalWordsLearned
+      final adjustedTotal = cloudTotal > stats.totalWordsLearned ? cloudTotal : stats.totalWordsLearned;
+
+      return stats.copyWith(
+        totalWordsLearned: adjustedTotal,
+        levelStats: newLevelStats,
+      );
+    } catch (e) {
+      return stats;
     }
   }
 
@@ -329,14 +391,21 @@ class LearningStatsService {
 
   static int _calculateStreak(LearningStats stats, DateTime now) {
     final lastStudy = stats.lastStudyDate;
-    final daysDifference = now.difference(lastStudy).inDays;
-    
+    final today = DateTime(now.year, now.month, now.day);
+    final lastDay = DateTime(lastStudy.year, lastStudy.month, lastStudy.day);
+    final daysDifference = today.difference(lastDay).inDays;
+
+    // 首次或沒有有效記錄時，從1開始
+    if (stats.currentStreak <= 0) {
+      return 1;
+    }
+
     if (daysDifference == 0) {
-      return stats.currentStreak;
+      return stats.currentStreak; // 同一天不增加
     } else if (daysDifference == 1) {
-      return stats.currentStreak + 1;
+      return stats.currentStreak + 1; // 隔天連續
     } else {
-      return 1; // 重新開始連續學習
+      return 1; // 中斷後重置為1（今日學習）
     }
   }
 
@@ -355,61 +424,78 @@ class LearningStatsService {
     return (daysSinceFirstDay / 7).ceil();
   }
 
-  static Future<void> _checkAchievements(LearningStats stats) async {
-    // 成就檢查邏輯
-    final achievements = <Achievement>[];
-    
-    // 學習單字成就
-    if (stats.totalWordsLearned >= 100 && !_hasAchievement(stats.achievements, 'words_100')) {
-      achievements.add(Achievement(
-        id: 'words_100',
-        title: '單字新手',
-        description: '學習了100個單字',
-        icon: '🎯',
-        isUnlocked: true,
-        unlockedAt: DateTime.now(),
-        progress: stats.totalWordsLearned,
-        target: 100,
-      ));
-    }
-    
-    if (stats.totalWordsLearned >= 500 && !_hasAchievement(stats.achievements, 'words_500')) {
-      achievements.add(Achievement(
-        id: 'words_500',
-        title: '單字達人',
-        description: '學習了500個單字',
-        icon: '🏆',
-        isUnlocked: true,
-        unlockedAt: DateTime.now(),
-        progress: stats.totalWordsLearned,
-        target: 500,
-      ));
-    }
-    
-    // 連續學習成就
-    if (stats.currentStreak >= 7 && !_hasAchievement(stats.achievements, 'streak_7')) {
-      achievements.add(Achievement(
-        id: 'streak_7',
-        title: '一週堅持',
-        description: '連續學習7天',
-        icon: '🔥',
-        isUnlocked: true,
-        unlockedAt: DateTime.now(),
-        progress: stats.currentStreak,
-        target: 7,
-      ));
-    }
-    
-    if (achievements.isNotEmpty) {
-      final updatedAchievements = List<Achievement>.from(stats.achievements);
-      updatedAchievements.addAll(achievements);
-      
-      final updatedStats = stats.copyWith(achievements: updatedAchievements);
-      await saveLearningStats(updatedStats);
-    }
+  static Future<LearningStats> _ensureAchievementsCatalog(LearningStats stats) async {
+    return await _buildAchievementsWithProgress(stats);
   }
 
-  static bool _hasAchievement(List<Achievement> achievements, String id) {
-    return achievements.any((a) => a.id == id);
+  static Future<LearningStats> _buildAchievementsWithProgress(LearningStats stats) async {
+    final catalog = _achievementCatalog();
+    final existing = {for (final a in stats.achievements) a.id: a};
+    final computed = <Achievement>[];
+
+    for (final def in catalog) {
+      final id = def['id'] as String;
+      final title = def['title'] as String;
+      final description = def['description'] as String;
+      final icon = def['icon'] as String;
+      final target = def['target'] as int;
+      final type = def['type'] as String; // 'words' or 'streak'
+
+      final progress = type == 'words' ? stats.totalWordsLearned : stats.currentStreak;
+      final isUnlocked = progress >= target;
+      final unlockedAt = isUnlocked ? (existing[id]?.unlockedAt ?? DateTime.now()) : null;
+
+      computed.add(Achievement(
+        id: id,
+        title: title,
+        description: description,
+        icon: icon,
+        isUnlocked: isUnlocked,
+        unlockedAt: unlockedAt,
+        progress: progress,
+        target: target,
+      ));
+    }
+
+    return stats.copyWith(achievements: computed);
   }
+
+  static List<Map<String, Object>> _achievementCatalog() {
+    return [
+      {
+        'id': 'words_100',
+        'title': '單字新手',
+        'description': '學習了100個單字',
+        'icon': '🎯',
+        'target': 100,
+        'type': 'words',
+      },
+      {
+        'id': 'words_500',
+        'title': '單字達人',
+        'description': '學習了500個單字',
+        'icon': '🏆',
+        'target': 500,
+        'type': 'words',
+      },
+      {
+        'id': 'streak_7',
+        'title': '一週堅持',
+        'description': '連續學習7天',
+        'icon': '🔥',
+        'target': 7,
+        'type': 'streak',
+      },
+      {
+        'id': 'streak_30',
+        'title': '持之以恆',
+        'description': '連續學習30天',
+        'icon': '💪',
+        'target': 30,
+        'type': 'streak',
+      },
+    ];
+  }
+
+  // Removed: _hasAchievement no longer used after catalog-based achievements
 }

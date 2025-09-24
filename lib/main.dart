@@ -15,6 +15,107 @@ import 'screens/main_navigation.dart';
 import 'services/learning_stats_service.dart';
 import 'services/notifications_service.dart';
 
+Future<Map<String, dynamic>?> _pickQuizMode(BuildContext context) async {
+  String selected = 'ch2en';
+  bool immediate = false;
+  return await showDialog<Map<String, dynamic>>(
+    context: context,
+    builder: (ctx) {
+      return AlertDialog(
+        title: const Text('選擇測驗模式'),
+        content: StatefulBuilder(
+          builder: (context, setState) => Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              RadioListTile<String>(
+                title: const Text('中譯英'),
+                value: 'ch2en',
+                groupValue: selected,
+                onChanged: (v) => setState(() => selected = v!),
+              ),
+              RadioListTile<String>(
+                title: const Text('英譯中'),
+                value: 'en2ch',
+                groupValue: selected,
+                onChanged: (v) => setState(() => selected = v!),
+              ),
+              RadioListTile<String>(
+                title: const Text('聽力'),
+                value: 'listening',
+                groupValue: selected,
+                onChanged: (v) => setState(() => selected = v!),
+              ),
+              RadioListTile<String>(
+                title: const Text('填空'),
+                value: 'fillin',
+                groupValue: selected,
+                onChanged: (v) => setState(() => selected = v!),
+              ),
+              const Divider(),
+              CheckboxListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('立即顯示答案'),
+                value: immediate,
+                onChanged: (v) => setState(() => immediate = v ?? false),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('取消'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, {
+              'type': selected,
+              'immediate': immediate,
+            }),
+            child: const Text('開始'),
+          ),
+        ],
+      );
+    },
+  );
+}
+
+// Reinforcement helpers
+Future<void> _incrementReinforceCounter(String level, String wordKey, String type) async {
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    final storageKey = type == 'wrong' ? 'reinforce_wrong_$level' : 'reinforce_unfamiliar_$level';
+    final raw = prefs.getString(storageKey);
+    Map<String, dynamic> map = {};
+    if (raw != null && raw.isNotEmpty) {
+      try {
+        map = Map<String, dynamic>.from(json.decode(raw));
+      } catch (_) {
+        map = {};
+      }
+    }
+    final current = (map[wordKey] ?? 0) as int;
+    map[wordKey] = current + 1;
+    await prefs.setString(storageKey, json.encode(map));
+  } catch (_) {}
+}
+
+Future<List<String>> _loadReinforcementList(String level) async {
+  final prefs = await SharedPreferences.getInstance();
+  final wrongRaw = prefs.getString('reinforce_wrong_$level');
+  final unRaw = prefs.getString('reinforce_unfamiliar_$level');
+  final wrong = wrongRaw == null || wrongRaw.isEmpty
+      ? <String, int>{}
+      : Map<String, int>.from((json.decode(wrongRaw) as Map).map((k, v) => MapEntry(k.toString(), (v as num).toInt())));
+  final un = unRaw == null || unRaw.isEmpty
+      ? <String, int>{}
+      : Map<String, int>.from((json.decode(unRaw) as Map).map((k, v) => MapEntry(k.toString(), (v as num).toInt())));
+  final Set<String> result = {};
+  wrong.forEach((w, c) { if (c >= 2) result.add(w); });
+  un.forEach((w, c) { if (c >= 2) result.add(w); });
+  return result.toList()..sort();
+}
+
+
 // Utility class for shared functionality
 class AppUtils {
   // Show error message in a snackbar
@@ -566,6 +667,8 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
   void initState() {
     super.initState();
     _computeProgress();
+    // 當統計更新時，重新計算進度（避免需要重啟）
+    LearningStatsService.statsVersion.addListener(_computeProgress);
   }
 
   @override
@@ -573,6 +676,12 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
     super.didChangeDependencies();
     // Recompute when this page becomes active again
     _computeProgress();
+  }
+
+  @override
+  void dispose() {
+    LearningStatsService.statsVersion.removeListener(_computeProgress);
+    super.dispose();
   }
 
   Future<void> _computeProgress() async {
@@ -821,6 +930,7 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
                         child: Padding(
                           padding: const EdgeInsets.all(16.0),
                           child: Column(
+                            mainAxisSize: MainAxisSize.min,
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
                               FittedBox(
@@ -842,7 +952,7 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
                                   ),
                                 ),
                               ),
-                              const SizedBox(height: 12),
+                              const SizedBox(height: 8),
                               Builder(builder: (context) {
                                 final total = _levelTotals[level] ?? 0;
                                 final known = _levelKnowns[level] ?? 0;
@@ -856,6 +966,78 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
                                   ],
                                 );
                               }),
+                              const SizedBox(height: 6),
+                              FittedBox(
+                                child: OutlinedButton.icon(
+                                  icon: const Icon(Icons.fitness_center, size: 16),
+                                  label: const Text('補強清單'),
+                                  onPressed: () async {
+                                    final choice = await _pickQuizMode(context);
+                                    if (!context.mounted) return;
+                                    showModalBottomSheet(
+                                      context: context,
+                                      builder: (_) => SizedBox(
+                                        height: 200,
+                                        child: Column(
+                                          children: [
+                                            ListTile(
+                                              leading: const Icon(Icons.list),
+                                              title: const Text('查看補強清單'),
+                                              onTap: () {
+                                                Navigator.pop(context);
+                                                Navigator.push(
+                                                  context,
+                                                  MaterialPageRoute(
+                                                    builder: (_) => ReinforceEntryPage(level: level),
+                                                  ),
+                                                );
+                                              },
+                                            ),
+                                            ListTile(
+                                              leading: const Icon(Icons.play_arrow),
+                                              title: const Text('從補強清單出題'),
+                                              onTap: () async {
+                                                Navigator.pop(context);
+                                                final targets = await _loadReinforcementList(level);
+                                                if (targets.isEmpty) {
+                                                  if (context.mounted) {
+                                                    ScaffoldMessenger.of(context).showSnackBar(
+                                                      const SnackBar(content: Text('目前沒有需要補強的單字')),
+                                                    );
+                                                  }
+                                                  return;
+                                                }
+                                                String data = await rootBundle.loadString('assets/words.json');
+                                                final List<dynamic> jsonResult = json.decode(data);
+                                                final all = jsonResult.map((e) => Word.fromJson(e)).where((w) => w.level == level && targets.contains(w.english)).toList();
+                                                if (choice != null) {
+                                                  final type = choice['type'] as String;
+                                                  final immediate = choice['immediate'] as bool? ?? false;
+                                                  if (context.mounted) {
+                                                    Navigator.push(
+                                                      context,
+                                                      MaterialPageRoute(
+                                                        builder: (_) => QuizPage(
+                                                          type: type,
+                                                          level: level,
+                                                          questionCount: all.length,
+                                                          quizSubset: all,
+                                                          letter: null,
+                                                          showImmediateAnswer: immediate,
+                                                        ),
+                                                      ),
+                                                    );
+                                                  }
+                                                }
+                                              },
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                ),
+                              ),
                             ],
                           ),
                         ),
@@ -947,6 +1129,77 @@ class AlphabetGroupsPage extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+}
+
+class ReinforceEntryPage extends StatefulWidget {
+  final String level;
+  const ReinforceEntryPage({super.key, required this.level});
+
+  @override
+  State<ReinforceEntryPage> createState() => _ReinforceEntryPageState();
+}
+
+class _ReinforceEntryPageState extends State<ReinforceEntryPage> {
+  List<Word> _allLevelWords = [];
+  List<String> _targets = [];
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() => _loading = true);
+    try {
+      final targets = await _loadReinforcementList(widget.level);
+      String data = await rootBundle.loadString('assets/words.json');
+      final List<dynamic> jsonResult = json.decode(data);
+      final all = jsonResult.map((e) => Word.fromJson(e)).where((w) => w.level == widget.level).toList();
+      setState(() {
+        _targets = targets;
+        _allLevelWords = all;
+        _loading = false;
+      });
+    } catch (_) {
+      setState(() => _loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('等級 ${widget.level} 補強 (${_targets.length})'),
+        actions: [IconButton(onPressed: _load, icon: const Icon(Icons.refresh))],
+      ),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : (_targets.isEmpty
+              ? const Center(child: Text('目前沒有需要補強的單字'))
+              : ListView.builder(
+                  itemCount: _targets.length,
+                  itemBuilder: (context, index) {
+                    final word = _targets[index];
+                    final w = _allLevelWords.firstWhere((e) => e.english == word, orElse: () => Word(level: widget.level, english: word, pos: '', engPos: '', chinese: ''));
+                    return ListTile(
+                      title: Text(w.english),
+                      subtitle: Text(w.chinese),
+                      trailing: IconButton(
+                        icon: const Icon(Icons.play_circle_fill),
+                        onPressed: () {
+                          final tts = FlutterTts();
+                          tts.setLanguage('en-US');
+                          tts.awaitSpeakCompletion(true);
+                          tts.speak(w.english.replaceAll('/', ' '));
+                        },
+                      ),
+                    );
+                  },
+                )),
     );
   }
 }
@@ -1624,6 +1877,11 @@ class _WordQuizPageState extends State<WordQuizPage> {
   bool _isPressed = false;
   Timer? _longPressTimer;
   bool showCompletionPanel = false;
+  // Session aggregation for batched stats update
+  late DateTime _sessionStartTime;
+  int _sessionWordsLearned = 0;
+  int _sessionCorrectAnswers = 0;
+  int _sessionTotalAnswers = 0;
   String _getDateKey(DateTime date) {
     return '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
   }
@@ -1651,6 +1909,9 @@ class _WordQuizPageState extends State<WordQuizPage> {
     flutterTts = FlutterTts();
     _initTts();
     loadWordsAndProgress();
+    _sessionStartTime = DateTime.now();
+    // 統計更新時自動刷新當前頁的單字與進度
+    LearningStatsService.statsVersion.addListener(loadWordsAndProgress);
   }
 
   Future<void> _initTts() async {
@@ -1659,6 +1920,7 @@ class _WordQuizPageState extends State<WordQuizPage> {
     await flutterTts.setSpeechRate(settings.speechRate);
     await flutterTts.setPitch(settings.speechPitch);
     await flutterTts.setVolume(settings.speechVolume);
+    await flutterTts.awaitSpeakCompletion(true);
     
     // Configure audio session to not pause background music
     await flutterTts.setIosAudioCategory(
@@ -1700,6 +1962,22 @@ class _WordQuizPageState extends State<WordQuizPage> {
   void dispose() {
     _longPressTimer?.cancel();
     flutterTts.stop();
+    // On leaving the page, commit a single aggregated progress update
+    try {
+      final durationSeconds = DateTime.now().difference(_sessionStartTime).inSeconds;
+      final minutes = (durationSeconds / 60).ceil();
+      final studyMinutes = minutes > 0 ? minutes : 1;
+      if (_sessionWordsLearned > 0 || studyMinutes > 0) {
+        LearningStatsService.updateLearningProgress(
+          level: selectedLevel ?? '1',
+          wordsLearned: _sessionWordsLearned,
+          studyTimeMinutes: studyMinutes,
+          correctAnswers: _sessionCorrectAnswers,
+          totalAnswers: _sessionTotalAnswers,
+        );
+      }
+    } catch (_) {}
+    LearningStatsService.statsVersion.removeListener(loadWordsAndProgress);
     super.dispose();
   }
 
@@ -1710,7 +1988,6 @@ class _WordQuizPageState extends State<WordQuizPage> {
 
     setState(() => isSpeaking = true);
     try {
-      await _initTts(); // Re-initialize to apply latest settings
       await flutterTts.speak(textToSpeak);
     } catch (e) {
       if (mounted) setState(() => isSpeaking = false);
@@ -1851,17 +2128,18 @@ class _WordQuizPageState extends State<WordQuizPage> {
 
     // Perform async operations without blocking UI
     _saveProgressAsync(known, wordKey);
+    // Reinforcement: count unfamiliar swipes (not known) beyond 2 triggers in summary list
+    if (!known) {
+      try {
+        await _incrementReinforceCounter(selectedLevel ?? '1', wordKey, 'unfamiliar');
+      } catch (_) {}
+    }
 
-    // Record learning progress for statistics
+    // Aggregate session stats; commit when page is closed to avoid jank
     if (known && !wasKnown) {
-      // Only count as new learning if word wasn't known before
-      await LearningStatsService.updateLearningProgress(
-        level: selectedLevel ?? '1',
-        wordsLearned: 1,
-        studyTimeMinutes: 1, // Estimate 1 minute per word
-        correctAnswers: 1,
-        totalAnswers: 1,
-      );
+      _sessionWordsLearned += 1;
+      _sessionCorrectAnswers += 1;
+      _sessionTotalAnswers += 1;
 
       // Reschedule reminder with remaining words
       try {
@@ -2505,15 +2783,21 @@ class _WordListPageState extends State<WordListPage> {
         mainAxisAlignment: MainAxisAlignment.end,
         children: [
           FloatingActionButton.extended(
-            onPressed: () {
+            onPressed: () async {
+              final choice = await _pickQuizMode(context);
+              if (choice == null) return;
+              final type = choice['type'] as String;
+              final immediate = choice['immediate'] as bool? ?? false;
+              if (!mounted) return;
               Navigator.push(
                 context,
                 MaterialPageRoute(
                   builder: (_) => QuizPage(
-                    type: 'ch2en',
+                    type: type,
                     level: widget.level,
                     quizSubset: widget.words,
                     letter: widget.currentLetter,
+                    showImmediateAnswer: immediate,
                   ),
                 ),
               );
@@ -2753,19 +3037,26 @@ class _QuizPageState extends State<QuizPage> {
   }
 
   void _handleSpellingFillinSubmit(Word word) {
-    if (_isProcessing || _showAnswer) return;
+    if (_isProcessing) return;
     final input = _inputController.text.trim();
     final correct = word.english.split('/').first.trim();
     final isCorrect = input.toLowerCase() == correct.toLowerCase();
+
     setState(() {
       _showAnswer = true;
       _isAnswerCorrect = isCorrect;
       if (isCorrect) score++;
     });
-    Future.delayed(const Duration(milliseconds: 700), () {
-      _inputController.clear();
-      _nextQuestion();
-    });
+
+    if (isCorrect) {
+      Future.delayed(const Duration(milliseconds: 500), () {
+        if (!mounted) return;
+        _inputController.clear();
+        _nextQuestion();
+      });
+    } else {
+      // 錯誤時停留並顯示答案，直到使用者按「下一題」或送出正確
+    }
   }
 
   void _previousQuestion() {
@@ -2794,6 +3085,7 @@ class _QuizPageState extends State<QuizPage> {
         _selectedIndex = null;
         _isProcessing = false;
         _showAllTranslations = false;
+        _inputController.clear();
       });
       if (widget.type == 'listening') {
         await _tts.setLanguage('en-US');
@@ -2824,6 +3116,17 @@ class _QuizPageState extends State<QuizPage> {
         totalQuestions: quizWords.length,
         studyTimeMinutes: 5, // Estimate 5 minutes per quiz
       );
+
+      // Reinforcement: count wrong answers for this session
+      try {
+        for (int i = 0; i < quizWords.length; i++) {
+          final correctIdx = optionsList[i].indexWhere((w) => w.english == quizWords[i].english);
+          final user = userAnswers[i];
+          if (user >= 0 && user != correctIdx) {
+            await _incrementReinforceCounter(widget.level ?? '1', quizWords[i].english, 'wrong');
+          }
+        }
+      } catch (_) {}
 
       // Save quiz history to Firestore
       try {
@@ -2943,18 +3246,37 @@ class _QuizPageState extends State<QuizPage> {
                         TextField(
                           controller: _inputController,
                           textAlign: TextAlign.center,
+                          autofocus: true,
                           decoration: const InputDecoration(
                             hintText: '輸入英文答案',
                             border: OutlineInputBorder(),
                           ),
-                          onSubmitted: (_) {
-                            _handleSpellingFillinSubmit(word);
+                          onChanged: (val) {
+                            if (widget.showImmediateAnswer) {
+                              // 當輸入長度達到正確答案長度時立即判斷
+                              final correct = word.english.split('/').first.trim();
+                              if (val.trim().length >= correct.length) {
+                                _handleSpellingFillinSubmit(word);
+                              }
+                            }
                           },
+                          onSubmitted: (_) => _handleSpellingFillinSubmit(word),
                         ),
                         const SizedBox(height: 8),
-                        ElevatedButton(
-                          onPressed: () => _handleSpellingFillinSubmit(word),
-                          child: const Text('送出'),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            ElevatedButton(
+                              onPressed: () => _handleSpellingFillinSubmit(word),
+                              child: const Text('送出'),
+                            ),
+                            const SizedBox(width: 12),
+                            if (_showAnswer && !_isAnswerCorrect)
+                              ElevatedButton(
+                                onPressed: _nextQuestion,
+                                child: const Text('下一題'),
+                              ),
+                          ],
                         ),
                       ],
                     ),
@@ -3312,6 +3634,7 @@ class _AllWordsPageState extends State<AllWordsPage> {
     await flutterTts.setSpeechRate(settings.speechRate);
     await flutterTts.setPitch(settings.speechPitch);
     await flutterTts.setVolume(settings.speechVolume);
+    await flutterTts.awaitSpeakCompletion(true);
     
     // Configure audio session to not pause background music
     await flutterTts.setIosAudioCategory(
@@ -3332,7 +3655,6 @@ class _AllWordsPageState extends State<AllWordsPage> {
   Future<void> speakWord(String word) async {
     final textToSpeak = word.replaceAll('/', ' ');
     if (textToSpeak.trim().isEmpty) return;
-    await _initTts(); // Re-initialize to apply latest settings
     await flutterTts.speak(textToSpeak);
   }
 
