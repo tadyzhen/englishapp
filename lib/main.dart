@@ -662,13 +662,17 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
   Map<String, int> _levelKnowns = {};
   int _totalKnown = 0;
   int _totalWords = 0;
+  VoidCallback? _statsListener;
 
   @override
   void initState() {
     super.initState();
     _computeProgress();
     // 當統計更新時，重新計算進度（避免需要重啟）
-    LearningStatsService.statsVersion.addListener(_computeProgress);
+    _statsListener = () {
+      if (mounted) _computeProgress();
+    };
+    LearningStatsService.statsVersion.addListener(_statsListener!);
   }
 
   @override
@@ -680,7 +684,9 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
 
   @override
   void dispose() {
-    LearningStatsService.statsVersion.removeListener(_computeProgress);
+    if (_statsListener != null) {
+      LearningStatsService.statsVersion.removeListener(_statsListener!);
+    }
     super.dispose();
   }
 
@@ -840,18 +846,9 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
             },
           ),
           IconButton(
-            icon: const Icon(Icons.star),
-            tooltip: '收藏',
-            onPressed: () async {
-              await loadFavoriteWords();
-              if (!mounted) return;
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => FavoritePage(favoriteWords: favoriteWords),
-                ),
-              ).then((_) => loadFavoriteWords());
-            },
+            icon: const Icon(Icons.settings),
+            tooltip: '設定',
+            onPressed: showSettingsDialog,
           ),
           IconButton(
             icon: const Icon(Icons.refresh),
@@ -967,77 +964,6 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
                                 );
                               }),
                               const SizedBox(height: 6),
-                              FittedBox(
-                                child: OutlinedButton.icon(
-                                  icon: const Icon(Icons.fitness_center, size: 16),
-                                  label: const Text('補強清單'),
-                                  onPressed: () async {
-                                    final choice = await _pickQuizMode(context);
-                                    if (!context.mounted) return;
-                                    showModalBottomSheet(
-                                      context: context,
-                                      builder: (_) => SizedBox(
-                                        height: 200,
-                                        child: Column(
-                                          children: [
-                                            ListTile(
-                                              leading: const Icon(Icons.list),
-                                              title: const Text('查看補強清單'),
-                                              onTap: () {
-                                                Navigator.pop(context);
-                                                Navigator.push(
-                                                  context,
-                                                  MaterialPageRoute(
-                                                    builder: (_) => ReinforceEntryPage(level: level),
-                                                  ),
-                                                );
-                                              },
-                                            ),
-                                            ListTile(
-                                              leading: const Icon(Icons.play_arrow),
-                                              title: const Text('從補強清單出題'),
-                                              onTap: () async {
-                                                Navigator.pop(context);
-                                                final targets = await _loadReinforcementList(level);
-                                                if (targets.isEmpty) {
-                                                  if (context.mounted) {
-                                                    ScaffoldMessenger.of(context).showSnackBar(
-                                                      const SnackBar(content: Text('目前沒有需要補強的單字')),
-                                                    );
-                                                  }
-                                                  return;
-                                                }
-                                                String data = await rootBundle.loadString('assets/words.json');
-                                                final List<dynamic> jsonResult = json.decode(data);
-                                                final all = jsonResult.map((e) => Word.fromJson(e)).where((w) => w.level == level && targets.contains(w.english)).toList();
-                                                if (choice != null) {
-                                                  final type = choice['type'] as String;
-                                                  final immediate = choice['immediate'] as bool? ?? false;
-                                                  if (context.mounted) {
-                                                    Navigator.push(
-                                                      context,
-                                                      MaterialPageRoute(
-                                                        builder: (_) => QuizPage(
-                                                          type: type,
-                                                          level: level,
-                                                          questionCount: all.length,
-                                                          quizSubset: all,
-                                                          letter: null,
-                                                          showImmediateAnswer: immediate,
-                                                        ),
-                                                      ),
-                                                    );
-                                                  }
-                                                }
-                                              },
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                    );
-                                  },
-                                ),
-                              ),
                             ],
                           ),
                         ),
@@ -1284,8 +1210,8 @@ class _QuizOptionsPageState extends State<QuizOptionsPage> {
     List<Word> filtered = all.where((w) {
       bool matchesLevel = level == null || w.level == level;
       bool matchesLetter = letter == null || 
-          (w.english.isNotEmpty && 
-           w.english[0].toUpperCase() == letter.toUpperCase());
+          (w.english.isNotEmpty && w.english.length > 0 && letter.length > 0 &&
+           w.english[0].toUpperCase() == letter[0].toUpperCase());
       return matchesLevel && matchesLetter;
     }).toList();
     
@@ -1848,6 +1774,7 @@ class WordQuizPage extends StatefulWidget {
   final List<Word>? subsetWords; // limit quiz to this subset if provided
   final String? subsetLetter; // letter label for UI
   final List<String>? groupOrder; // navigation order of letters within level
+  final bool randomMode; // whether to shuffle words randomly
   const WordQuizPage({
     super.key,
     this.initialLevel,
@@ -1855,6 +1782,7 @@ class WordQuizPage extends StatefulWidget {
     this.subsetWords,
     this.subsetLetter,
     this.groupOrder,
+    this.randomMode = false,
   });
   @override
   State<WordQuizPage> createState() => _WordQuizPageState();
@@ -1882,6 +1810,7 @@ class _WordQuizPageState extends State<WordQuizPage> {
   int _sessionWordsLearned = 0;
   int _sessionCorrectAnswers = 0;
   int _sessionTotalAnswers = 0;
+  VoidCallback? _statsListener;
   String _getDateKey(DateTime date) {
     return '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
   }
@@ -1890,7 +1819,9 @@ class _WordQuizPageState extends State<WordQuizPage> {
   // Open Cambridge Dictionary for the current word in WebView
   Future<void> _openDictionary() async {
     try {
-      final word = words[currentIndex].english.split(' ').first;
+      final word = words.isNotEmpty && currentIndex < words.length 
+          ? words[currentIndex].english.split(' ').first
+          : 'example';
       await Navigator.push(
         context,
         MaterialPageRoute(builder: (context) => DictionaryWebView(word: word)),
@@ -1911,7 +1842,10 @@ class _WordQuizPageState extends State<WordQuizPage> {
     loadWordsAndProgress();
     _sessionStartTime = DateTime.now();
     // 統計更新時自動刷新當前頁的單字與進度
-    LearningStatsService.statsVersion.addListener(loadWordsAndProgress);
+    _statsListener = () {
+      if (mounted) loadWordsAndProgress();
+    };
+    LearningStatsService.statsVersion.addListener(_statsListener!);
   }
 
   Future<void> _initTts() async {
@@ -1977,7 +1911,9 @@ class _WordQuizPageState extends State<WordQuizPage> {
         );
       }
     } catch (_) {}
-    LearningStatsService.statsVersion.removeListener(loadWordsAndProgress);
+    if (_statsListener != null) {
+      LearningStatsService.statsVersion.removeListener(_statsListener!);
+    }
     super.dispose();
   }
 
@@ -2007,12 +1943,20 @@ class _WordQuizPageState extends State<WordQuizPage> {
     }
     final prefs = await SharedPreferences.getInstance();
     String level = widget.initialLevel ?? temp.keys.first;
+    if (level.isEmpty && temp.isNotEmpty) {
+      level = temp.keys.first;
+    }
     List<Word> wordList;
     if (widget.subsetWords != null && widget.subsetWords!.isNotEmpty) {
       // use provided subset within level
       wordList = List<Word>.from(widget.subsetWords!);
     } else {
       wordList = List<Word>.from(temp[level] ?? []);
+    }
+    
+    // Apply random mode if enabled
+    if (widget.randomMode) {
+      wordList.shuffle();
     }
     // 1) 先從本機載入
     Set<String> known = {};
@@ -2084,12 +2028,29 @@ class _WordQuizPageState extends State<WordQuizPage> {
   }
 
   int _findNextUnfamiliarIndex(int fromIndex) {
-    for (int i = fromIndex + 1; i < words.length; i++) {
-      if (!knownWords.contains(words[i].english)) {
-        return i;
+    if (widget.randomMode) {
+      // In random mode, find any unfamiliar word
+      for (int i = 0; i < words.length; i++) {
+        if (!knownWords.contains(words[i].english)) {
+          return i;
+        }
       }
+      return -1; // All words are familiar
+    } else {
+      // Sequential mode: First, check from current position to end
+      for (int i = fromIndex + 1; i < words.length; i++) {
+        if (!knownWords.contains(words[i].english)) {
+          return i;
+        }
+      }
+      // If no unfamiliar words found from current position, check from beginning
+      for (int i = 0; i <= fromIndex; i++) {
+        if (!knownWords.contains(words[i].english)) {
+          return i;
+        }
+      }
+      return -1; // All words are familiar
     }
-    return -1; // No more unfamiliar words
   }
 
 
@@ -2122,7 +2083,15 @@ class _WordQuizPageState extends State<WordQuizPage> {
         currentIndex = nextIndex;
         showChinese = false;
       } else {
-        isFinished = true;
+        // Check if all words in current subset are familiar
+        bool allFamiliar = true;
+        for (final word in words) {
+          if (!knownWords.contains(word.english)) {
+            allFamiliar = false;
+            break;
+          }
+        }
+        isFinished = allFamiliar;
       }
     });
 
@@ -2390,6 +2359,7 @@ class _WordQuizPageState extends State<WordQuizPage> {
                                       subsetWords: nextLetterWords,
                                       subsetLetter: nextLetter,
                                       groupOrder: widget.groupOrder,
+                                      randomMode: widget.randomMode,
                                     ),
                                   ),
                                 );
@@ -2740,11 +2710,48 @@ class WordListPage extends StatefulWidget {
 class _WordListPageState extends State<WordListPage> {
   Set<String> _knownWords = {};
   bool _isLoading = true;
+  late FlutterTts _tts;
 
   @override
   void initState() {
     super.initState();
+    _tts = FlutterTts();
+    _initTts();
     _loadKnownWords();
+  }
+
+  Future<void> _initTts() async {
+    final settings = SettingsProvider.of(context);
+    await _tts.setLanguage("en-US");
+    await _tts.setSpeechRate(settings.speechRate);
+    await _tts.setPitch(settings.speechPitch);
+    await _tts.setVolume(settings.speechVolume);
+    await _tts.awaitSpeakCompletion(true);
+    
+    if (settings.ttsVoice != null) {
+      await _tts.setVoice(settings.ttsVoice!);
+    }
+  }
+
+  Future<void> _speakWord(String word) async {
+    final textToSpeak = word.replaceAll('/', ' ');
+    if (textToSpeak.trim().isEmpty) return;
+    await _tts.speak(textToSpeak);
+  }
+
+  Future<void> _openDictionary(String word) async {
+    try {
+      final lookupWord = word.split('/').first.trim();
+      await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => DictionaryWebView(word: lookupWord),
+        ),
+      );
+      await AppUtils.triggerHapticFeedback();
+    } catch (e) {
+      if (mounted) AppUtils.showErrorSnackBar(context, '發生錯誤: $e');
+    }
   }
 
   Future<void> _loadKnownWords() async {
@@ -2759,6 +2766,12 @@ class _WordListPageState extends State<WordListPage> {
   }
 
   @override
+  void dispose() {
+    _tts.stop();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: Text('等級 ${widget.level} - 單字列表')),
@@ -2769,63 +2782,627 @@ class _WordListPageState extends State<WordListPage> {
               itemBuilder: (context, index) {
                 final word = widget.words[index];
                 final isKnown = _knownWords.contains(word.english);
-                return ListTile(
-                  title: Text(
-                    word.english,
-                    style: TextStyle(color: isKnown ? Colors.green : Colors.red),
+                return GestureDetector(
+                  onTap: () => _speakWord(word.english),
+                  onLongPress: () => _openDictionary(word.english),
+                  child: ListTile(
+                    title: Text(
+                      word.english,
+                      style: TextStyle(color: isKnown ? Colors.green : Colors.red),
+                    ),
+                    subtitle: Text(word.chinese),
+                    trailing: IconButton(
+                      icon: const Icon(Icons.volume_up, color: Colors.grey),
+                      onPressed: () => _speakWord(word.english),
+                      tooltip: '發音',
+                    ),
                   ),
-                  subtitle: Text(word.chinese),
-                  // onTap functionality removed as requested
                 );
               },
             ),
-      floatingActionButton: Row(
-        mainAxisAlignment: MainAxisAlignment.end,
-        children: [
-          FloatingActionButton.extended(
-            onPressed: () async {
-              final choice = await _pickQuizMode(context);
-              if (choice == null) return;
-              final type = choice['type'] as String;
-              final immediate = choice['immediate'] as bool? ?? false;
-              if (!mounted) return;
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => QuizPage(
-                    type: type,
-                    level: widget.level,
-                    quizSubset: widget.words,
-                    letter: widget.currentLetter,
-                    showImmediateAnswer: immediate,
-                  ),
-                ),
-              );
-            },
-            label: const Text('測驗'),
-            icon: const Icon(Icons.quiz),
-            heroTag: 'quiz_fab',
-          ),
-          const SizedBox(width: 16),
-          FloatingActionButton.extended(
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => WordQuizPage(
-                    initialLevel: widget.level,
-                    subsetWords: widget.words,
-                    subsetLetter: widget.currentLetter,
-                    groupOrder: widget.groupOrder,
-                  ),
-                ),
-              ).then((_) => _loadKnownWords()); // Refresh known words when returning
-            },
-            label: const Text('開始'),
-            icon: const Icon(Icons.play_arrow),
-            heroTag: 'start_fab',
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () async {
+          final choice = await _pickQuizMode(context);
+          if (choice == null) return;
+          final type = choice['type'] as String;
+          final immediate = choice['immediate'] as bool? ?? false;
+          if (!mounted) return;
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => QuizPage(
+                type: type,
+                level: widget.level,
+                quizSubset: widget.words,
+                letter: widget.currentLetter,
+                showImmediateAnswer: immediate,
+              ),
+            ),
+          );
+        },
+        label: const Text('測驗'),
+        icon: const Icon(Icons.quiz),
+        heroTag: 'quiz_fab',
+      ),
+    );
+  }
+}
+
+// 加強頁面 - 包含補強和收藏功能
+class ReinforceScreen extends StatefulWidget {
+  const ReinforceScreen({super.key});
+
+  @override
+  State<ReinforceScreen> createState() => _ReinforceScreenState();
+}
+
+class _ReinforceScreenState extends State<ReinforceScreen> {
+  List<Word> favoriteWords = [];
+  bool isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    loadFavoriteWords();
+  }
+
+  Future<void> loadFavoriteWords() async {
+    final prefs = await SharedPreferences.getInstance();
+    // 1) 先拿本機收藏
+    final localFavs = prefs.getStringList('favorite_words') ?? [];
+    List<String> mergedFavs = List.from(localFavs);
+    try {
+      // 2) 從雲端抓收藏，若有資料與本機合併並回寫本機
+      final cloudFavs = await FirestoreSync.getFavorites();
+      if (cloudFavs.isNotEmpty) {
+        mergedFavs = {...localFavs, ...cloudFavs}.toList();
+        await prefs.setStringList('favorite_words', mergedFavs);
+      }
+    } catch (_) {}
+
+    String data = await rootBundle.loadString('assets/words.json');
+    List<dynamic> jsonResult = json.decode(data);
+    List<Word> allWords = jsonResult.map((item) => Word.fromJson(item)).toList();
+    setState(() {
+      favoriteWords = allWords.where((w) => mergedFavs.contains(w.english)).toList();
+      isLoading = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('加強學習'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: loadFavoriteWords,
+            tooltip: '重新整理',
           ),
         ],
+      ),
+      body: isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : SingleChildScrollView(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // 補強功能區域
+                  Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            '補強學習',
+                            style: TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          const Text(
+                            '針對錯誤和不熟悉的單字進行加強練習',
+                            style: TextStyle(color: Colors.grey),
+                          ),
+                          const SizedBox(height: 16),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: ElevatedButton.icon(
+                                  onPressed: () async {
+                                    final choice = await _pickQuizMode(context);
+                                    if (choice == null) return;
+                                    final type = choice['type'] as String;
+                                    final immediate = choice['immediate'] as bool? ?? false;
+                                    if (!mounted) return;
+                                    
+                                    // 獲取所有等級的補強單字
+                                    final levels = ['1', '2', '3', '4', '5', '6'];
+                                    List<Word> allReinforceWords = [];
+                                    
+                                    for (final level in levels) {
+                                      final targets = await _loadReinforcementList(level);
+                                      if (targets.isNotEmpty) {
+                                        String data = await rootBundle.loadString('assets/words.json');
+                                        final List<dynamic> jsonResult = json.decode(data);
+                                        final levelWords = jsonResult.map((e) => Word.fromJson(e)).where((w) => w.level == level && targets.contains(w.english)).toList();
+                                        allReinforceWords.addAll(levelWords);
+                                      }
+                                    }
+                                    
+                                    if (allReinforceWords.isEmpty) {
+                                      if (mounted) {
+                                        ScaffoldMessenger.of(context).showSnackBar(
+                                          const SnackBar(content: Text('目前沒有需要補強的單字')),
+                                        );
+                                      }
+                                      return;
+                                    }
+                                    
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (_) => QuizPage(
+                                          type: type,
+                                          level: null,
+                                          questionCount: allReinforceWords.length,
+                                          quizSubset: allReinforceWords,
+                                          letter: null,
+                                          showImmediateAnswer: immediate,
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                  icon: const Icon(Icons.quiz),
+                                  label: const Text('補強測驗'),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: OutlinedButton.icon(
+                                  onPressed: () {
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (_) => const ReinforceListPage(),
+                                      ),
+                                    );
+                                  },
+                                  icon: const Icon(Icons.list),
+                                  label: const Text('查看清單'),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  
+                  // 收藏功能區域
+                  Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            '收藏單字',
+                            style: TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            '已收藏 ${favoriteWords.length} 個單字',
+                            style: const TextStyle(color: Colors.grey),
+                          ),
+                          const SizedBox(height: 16),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: ElevatedButton.icon(
+                                  onPressed: favoriteWords.isEmpty ? null : () async {
+                                    final choice = await _pickQuizMode(context);
+                                    if (choice == null) return;
+                                    final type = choice['type'] as String;
+                                    final immediate = choice['immediate'] as bool? ?? false;
+                                    if (!mounted) return;
+                                    
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (_) => QuizPage(
+                                          type: type,
+                                          level: null,
+                                          questionCount: favoriteWords.length,
+                                          quizSubset: favoriteWords,
+                                          letter: null,
+                                          showImmediateAnswer: immediate,
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                  icon: const Icon(Icons.quiz),
+                                  label: const Text('收藏測驗'),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: OutlinedButton.icon(
+                                  onPressed: () {
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (_) => FavoritePage(favoriteWords: favoriteWords),
+                                      ),
+                                    ).then((_) => loadFavoriteWords());
+                                  },
+                                  icon: const Icon(Icons.star),
+                                  label: const Text('查看收藏'),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  
+                  // 單字卡學習區域
+                  Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            '單字卡學習',
+                            style: TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          const Text(
+                            '使用單字卡進行學習和複習',
+                            style: TextStyle(color: Colors.grey),
+                          ),
+                          const SizedBox(height: 16),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: ElevatedButton.icon(
+                                  onPressed: () {
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (_) => const AllWordsQuizPage(),
+                                      ),
+                                    );
+                                  },
+                                  icon: const Icon(Icons.play_arrow),
+                                  label: const Text('全部單字'),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: OutlinedButton.icon(
+                                  onPressed: favoriteWords.isEmpty ? null : () {
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (_) => WordQuizPage(
+                                          subsetWords: favoriteWords,
+                                          subsetLetter: '收藏',
+                                          randomMode: false,
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                  icon: const Icon(Icons.star),
+                                  label: const Text('收藏單字'),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+    );
+  }
+}
+
+// 補強清單頁面
+class ReinforceListPage extends StatefulWidget {
+  const ReinforceListPage({super.key});
+
+  @override
+  State<ReinforceListPage> createState() => _ReinforceListPageState();
+}
+
+class _ReinforceListPageState extends State<ReinforceListPage> {
+  Map<String, List<String>> reinforceWords = {};
+  Map<String, List<Word>> reinforceWordsByLevel = {};
+  bool isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    loadReinforceWords();
+  }
+
+  Future<void> loadReinforceWords() async {
+    final levels = ['1', '2', '3', '4', '5', '6'];
+    Map<String, List<String>> temp = {};
+    Map<String, List<Word>> tempWords = {};
+    
+    String data = await rootBundle.loadString('assets/words.json');
+    List<dynamic> jsonResult = json.decode(data);
+    List<Word> allWords = jsonResult.map((item) => Word.fromJson(item)).toList();
+    
+    for (final level in levels) {
+      final targets = await _loadReinforcementList(level);
+      temp[level] = targets;
+      
+      if (targets.isNotEmpty) {
+        tempWords[level] = allWords.where((w) => w.level == level && targets.contains(w.english)).toList();
+      }
+    }
+    
+    setState(() {
+      reinforceWords = temp;
+      reinforceWordsByLevel = tempWords;
+      isLoading = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('補強清單'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: loadReinforceWords,
+          ),
+        ],
+      ),
+      body: isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : ListView.builder(
+              itemCount: reinforceWords.length,
+              itemBuilder: (context, index) {
+                final level = reinforceWords.keys.elementAt(index);
+                final words = reinforceWords[level]!;
+                final wordObjects = reinforceWordsByLevel[level] ?? [];
+                
+                if (words.isEmpty) return const SizedBox.shrink();
+                
+                return Card(
+                  margin: const EdgeInsets.all(8),
+                  child: Column(
+                    children: [
+                      ListTile(
+                        title: Text(
+                          '等級 $level',
+                          style: const TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        subtitle: Text('${words.length} 個單字需要補強'),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            IconButton(
+                              icon: const Icon(Icons.play_arrow, color: Colors.blue),
+                              onPressed: wordObjects.isEmpty ? null : () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => WordQuizPage(
+                                      subsetWords: wordObjects,
+                                      subsetLetter: level,
+                                      randomMode: false,
+                                    ),
+                                  ),
+                                );
+                              },
+                              tooltip: '順序學習',
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.shuffle, color: Colors.green),
+                              onPressed: wordObjects.isEmpty ? null : () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => WordQuizPage(
+                                      subsetWords: wordObjects,
+                                      subsetLetter: level,
+                                      randomMode: true,
+                                    ),
+                                  ),
+                                );
+                              },
+                              tooltip: '隨機學習',
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.quiz, color: Colors.purple),
+                              onPressed: wordObjects.isEmpty ? null : () async {
+                                final choice = await _pickQuizMode(context);
+                                if (choice == null) return;
+                                final type = choice['type'] as String;
+                                final immediate = choice['immediate'] as bool? ?? false;
+                                if (!mounted) return;
+                                
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => QuizPage(
+                                      type: type,
+                                      level: level,
+                                      quizSubset: wordObjects,
+                                      letter: level,
+                                      showImmediateAnswer: immediate,
+                                    ),
+                                  ),
+                                );
+                              },
+                              tooltip: '測驗',
+                            ),
+                          ],
+                        ),
+                      ),
+                      ExpansionTile(
+                        title: const Text('查看單字列表'),
+                        children: wordObjects.map((word) => ListTile(
+                          title: Text(
+                            word.english,
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                          subtitle: Text(
+                            '${word.pos}  ${word.chinese}',
+                            style: const TextStyle(fontSize: 14),
+                          ),
+                          trailing: IconButton(
+                            icon: const Icon(Icons.play_circle_fill, color: Colors.blue, size: 20),
+                            onPressed: () {
+                              final tts = FlutterTts();
+                              tts.setLanguage('en-US');
+                              tts.awaitSpeakCompletion(true);
+                              tts.speak(word.english.replaceAll('/', ' '));
+                            },
+                            tooltip: '發音',
+                          ),
+                        )).toList(),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+    );
+  }
+}
+
+// 全部單字學習頁面
+class AllWordsQuizPage extends StatefulWidget {
+  const AllWordsQuizPage({super.key});
+
+  @override
+  State<AllWordsQuizPage> createState() => _AllWordsQuizPageState();
+}
+
+class _AllWordsQuizPageState extends State<AllWordsQuizPage> {
+  final List<String> levels = ['1', '2', '3', '4', '5', '6'];
+  String? selectedLevel;
+  bool randomMode = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('單字卡學習')),
+      body: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              '選擇學習等級',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 16),
+            Wrap(
+              spacing: 8,
+              children: [
+                ...levels.map((level) => FilterChip(
+                  label: Text('等級 $level'),
+                  selected: selectedLevel == level,
+                  onSelected: (selected) {
+                    setState(() {
+                      selectedLevel = selected ? level : null;
+                    });
+                  },
+                )),
+                FilterChip(
+                  label: const Text('全部'),
+                  selected: selectedLevel == 'all',
+                  onSelected: (selected) {
+                    setState(() {
+                      selectedLevel = selected ? 'all' : null;
+                    });
+                  },
+                ),
+              ],
+            ),
+            const SizedBox(height: 24),
+            SwitchListTile(
+              title: const Text('隨機模式'),
+              subtitle: const Text('隨機打亂單字順序'),
+              value: randomMode,
+              onChanged: (value) {
+                setState(() {
+                  randomMode = value;
+                });
+              },
+            ),
+            const SizedBox(height: 24),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: selectedLevel != null ? () async {
+                  String data = await rootBundle.loadString('assets/words.json');
+                  List<dynamic> jsonResult = json.decode(data);
+                  List<Word> allWords = jsonResult.map((item) => Word.fromJson(item)).toList();
+                  
+                  List<Word> filteredWords;
+                  if (selectedLevel == 'all') {
+                    filteredWords = allWords;
+                  } else {
+                    filteredWords = allWords.where((w) => w.level == selectedLevel).toList();
+                  }
+                  
+                  if (filteredWords.isEmpty) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('沒有找到單字')),
+                    );
+                    return;
+                  }
+                  
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => WordQuizPage(
+                        initialLevel: selectedLevel,
+                        subsetWords: filteredWords,
+                        subsetLetter: selectedLevel == 'all' ? '全部' : selectedLevel,
+                        randomMode: randomMode,
+                      ),
+                    ),
+                  );
+                } : null,
+                icon: const Icon(Icons.play_arrow),
+                label: const Text('開始學習'),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -2840,11 +3417,24 @@ class FavoritePage extends StatefulWidget {
 
 class _FavoritePageState extends State<FavoritePage> {
   late List<Word> favWords;
+  Map<String, List<Word>> favWordsByLevel = {};
 
   @override
   void initState() {
     super.initState();
     favWords = List.from(widget.favoriteWords);
+    _categorizeByLevel();
+  }
+
+  void _categorizeByLevel() {
+    favWordsByLevel.clear();
+    for (final word in favWords) {
+      favWordsByLevel.putIfAbsent(word.level, () => []).add(word);
+    }
+    // Sort words within each level alphabetically
+    for (final level in favWordsByLevel.keys) {
+      favWordsByLevel[level]!.sort((a, b) => a.english.toLowerCase().compareTo(b.english.toLowerCase()));
+    }
   }
 
   Future<void> removeFavorite(String english) async {
@@ -2859,6 +3449,7 @@ class _FavoritePageState extends State<FavoritePage> {
     }
     setState(() {
       favWords.removeWhere((w) => w.english == english);
+      _categorizeByLevel();
     });
     if (mounted) {
       ScaffoldMessenger.of(
@@ -2873,26 +3464,108 @@ class _FavoritePageState extends State<FavoritePage> {
       appBar: AppBar(title: const Text('收藏單字')),
       body: favWords.isEmpty
           ? const Center(child: Text('尚未收藏任何單字'))
-          : ListView.separated(
-              itemCount: favWords.length,
-              separatorBuilder: (_, __) => const Divider(height: 1),
-              itemBuilder: (context, idx) {
-                final word = favWords[idx];
-                return ListTile(
-                  title: Text(
-                    word.english,
-                    style: const TextStyle(
-                      fontSize: 24,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  subtitle: Text(
-                    '${word.pos}  ${word.chinese}',
-                    style: const TextStyle(fontSize: 18),
-                  ),
-                  trailing: IconButton(
-                    icon: const Icon(Icons.delete, color: Colors.red),
-                    onPressed: () => removeFavorite(word.english),
+          : ListView.builder(
+              itemCount: favWordsByLevel.length,
+              itemBuilder: (context, index) {
+                final level = favWordsByLevel.keys.elementAt(index);
+                final words = favWordsByLevel[level]!;
+                
+                return Card(
+                  margin: const EdgeInsets.all(8),
+                  child: Column(
+                    children: [
+                      ListTile(
+                        title: Text(
+                          '等級 $level',
+                          style: const TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        subtitle: Text('${words.length} 個收藏單字'),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            IconButton(
+                              icon: const Icon(Icons.play_arrow, color: Colors.blue),
+                              onPressed: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => WordQuizPage(
+                                      subsetWords: words,
+                                      subsetLetter: level,
+                                      randomMode: false,
+                                    ),
+                                  ),
+                                );
+                              },
+                              tooltip: '順序學習',
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.shuffle, color: Colors.green),
+                              onPressed: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => WordQuizPage(
+                                      subsetWords: words,
+                                      subsetLetter: level,
+                                      randomMode: true,
+                                    ),
+                                  ),
+                                );
+                              },
+                              tooltip: '隨機學習',
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.quiz, color: Colors.purple),
+                              onPressed: () async {
+                                final choice = await _pickQuizMode(context);
+                                if (choice == null) return;
+                                final type = choice['type'] as String;
+                                final immediate = choice['immediate'] as bool? ?? false;
+                                if (!mounted) return;
+                                
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => QuizPage(
+                                      type: type,
+                                      level: level,
+                                      quizSubset: words,
+                                      letter: level,
+                                      showImmediateAnswer: immediate,
+                                    ),
+                                  ),
+                                );
+                              },
+                              tooltip: '測驗',
+                            ),
+                          ],
+                        ),
+                      ),
+                      ExpansionTile(
+                        title: const Text('查看單字列表'),
+                        children: words.map((word) => ListTile(
+                          title: Text(
+                            word.english,
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                          subtitle: Text(
+                            '${word.pos}  ${word.chinese}',
+                            style: const TextStyle(fontSize: 14),
+                          ),
+                          trailing: IconButton(
+                            icon: const Icon(Icons.delete, color: Colors.red, size: 20),
+                            onPressed: () => removeFavorite(word.english),
+                          ),
+                        )).toList(),
+                      ),
+                    ],
                   ),
                 );
               },
@@ -2977,7 +3650,8 @@ class _QuizPageState extends State<QuizPage> {
       filteredWords = allWords.where((word) {
         bool levelMatch = widget.level == null || word.level == widget.level;
         bool letterMatch = widget.letter == null ||
-            word.english.toLowerCase().startsWith(widget.letter!.toLowerCase());
+            (word.english.isNotEmpty && widget.letter!.isNotEmpty &&
+            word.english.toLowerCase().startsWith(widget.letter!.toLowerCase()));
         return levelMatch && letterMatch;
       }).toList();
     }
@@ -2994,11 +3668,35 @@ class _QuizPageState extends State<QuizPage> {
     // 4. Generate options for each question
     optionsList = quizWords.map((answer) {
       List<Word> options = [answer];
+      
+      // Get the first letter of the correct answer
+      String firstLetter = answer.english.split('/').first.trim().toLowerCase();
+      if (firstLetter.isNotEmpty) {
+        firstLetter = firstLetter[0];
+      }
+      
+      // Find distractors that start with the same letter
       List<Word> distractors = allWords
-          .where((w) =>
-              w.english != answer.english &&
-              (widget.level == null || w.level == widget.level))
+          .where((w) {
+            String wordFirstLetter = w.english.split('/').first.trim().toLowerCase();
+            return w.english != answer.english &&
+                   wordFirstLetter.isNotEmpty &&
+                   wordFirstLetter[0] == firstLetter &&
+                   (widget.level == null || w.level == widget.level);
+          })
           .toList();
+      
+      // If not enough distractors with same first letter, add others
+      if (distractors.length < 3) {
+        List<Word> otherDistractors = allWords
+            .where((w) =>
+                w.english != answer.english &&
+                !distractors.any((d) => d.english == w.english) &&
+                (widget.level == null || w.level == widget.level))
+            .toList();
+        distractors.addAll(otherDistractors);
+      }
+      
       distractors.shuffle();
       options.addAll(distractors.take(3));
       options.shuffle();
@@ -3179,6 +3877,11 @@ class _QuizPageState extends State<QuizPage> {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
+    // Safety check for current index
+    if (current >= quizWords.length || current >= optionsList.length) {
+      return const Scaffold(body: Center(child: Text('測驗資料錯誤')));
+    }
+
     final word = quizWords[current];
     final options = optionsList[current];
     final correctIdx = options.indexWhere((w) => w.english == word.english);
@@ -3213,7 +3916,7 @@ class _QuizPageState extends State<QuizPage> {
                 children: [
                   if (widget.type == 'ch2en' || widget.type == 'en2ch')
                     Text(
-                      widget.type == 'ch2en' ? word.chinese : word.english,
+                      widget.type == 'ch2en' ? word.chinese : word.english.split('/').first.trim(),
                       style: const TextStyle(
                         fontSize: 24,
                         fontWeight: FontWeight.bold,
@@ -3233,14 +3936,16 @@ class _QuizPageState extends State<QuizPage> {
                         ),
                         const SizedBox(height: 16),
                         Builder(builder: (_) {
-                          final eng = word.english.split('/').first.trim();
-                          if (eng.length >= 2) {
-                            final masked = eng.length <= 4
-                                ? '${eng[0]}${"_" * (eng.length - 2)}${eng[eng.length - 1]}'
-                                : '${eng.substring(0, 2)}${"_" * (eng.length - 4)}${eng.substring(eng.length - 2)}';
-                            return Text('提示: $masked', style: const TextStyle(color: Colors.grey));
-                          }
-                          return const SizedBox.shrink();
+                        final eng = word.english.split('/').first.trim();
+                        if (eng.length >= 2) {
+                          final masked = eng.length <= 4
+                              ? '${eng[0]}${"_" * (eng.length - 2)}${eng[eng.length - 1]}'
+                              : eng.length >= 6 
+                                  ? '${eng.substring(0, 2)}${"_" * (eng.length - 4)}${eng.substring(eng.length - 2)}'
+                                  : '${eng[0]}${"_" * (eng.length - 2)}${eng[eng.length - 1]}';
+                          return Text('提示: $masked', style: const TextStyle(color: Colors.grey));
+                        }
+                        return const SizedBox.shrink();
                         }),
                         const SizedBox(height: 8),
                         TextField(
@@ -3338,7 +4043,7 @@ class _QuizPageState extends State<QuizPage> {
                                   children: [
                                     Text(
                                       widget.type == 'ch2en'
-                                          ? opt.english
+                                          ? opt.english.split('/').first.trim()
                                           : opt.chinese,
                                       style: TextStyle(
                                         fontSize: 18,
@@ -3363,7 +4068,7 @@ class _QuizPageState extends State<QuizPage> {
                                         child: Text(
                                           widget.type == 'ch2en'
                                               ? opt.chinese
-                                              : opt.english,
+                                              : opt.english.split('/').first.trim(),
                                           style: TextStyle(
                                             fontSize: 14,
                                             color: isCorrect && _showAnswer
@@ -3494,7 +4199,7 @@ class QuizResultsPage extends StatelessWidget {
                 children: [
                   // Question
                   Text(
-                    '${index + 1}. ${quizType == 'ch2en' ? word.chinese : word.english}',
+                    '${index + 1}. ${quizType == 'ch2en' ? word.chinese : word.english.split('/').first.trim()}',
                     style: const TextStyle(
                       fontSize: 18,
                       fontWeight: FontWeight.bold,
@@ -3572,7 +4277,7 @@ class QuizResultsPage extends StatelessWidget {
 
                       return Chip(
                         label: Text(
-                          '${String.fromCharCode(65 + idx)}. ${quizType == 'ch2en' ? opt.english : opt.chinese}',
+                          '${String.fromCharCode(65 + idx)}. ${quizType == 'ch2en' ? opt.english.split('/').first.trim() : opt.chinese}',
                           style: TextStyle(
                             color: isCorrectOption
                                 ? Colors.green[800]

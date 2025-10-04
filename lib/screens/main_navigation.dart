@@ -17,6 +17,7 @@ class _MainNavigationState extends State<MainNavigation> {
     const LevelSelectPage(), // 主頁 - 單字卡
     const LearningStatsScreen(), // 學習統計
     const QuizOptionsPage(), // 測驗設定頁
+    const ReinforceScreen(), // 加強頁面
     const AccountScreen(),     // 帳號頁面
   ];
 
@@ -55,6 +56,11 @@ class _MainNavigationState extends State<MainNavigation> {
             icon: Icon(Icons.quiz_outlined),
             activeIcon: Icon(Icons.quiz),
             label: '測驗',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.fitness_center_outlined),
+            activeIcon: Icon(Icons.fitness_center),
+            label: '加強',
           ),
           BottomNavigationBarItem(
             icon: Icon(Icons.person_outline),
