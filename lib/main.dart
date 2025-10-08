@@ -2140,6 +2140,93 @@ class _WordQuizPageState extends State<WordQuizPage> {
     }
   }
 
+  // Immediate swipe handler for Dismissible widget
+  void _handleSwipeImmediate(bool known) {
+    if (isFinished) return;
+
+    String wordKey = words[currentIndex].english;
+    final wasKnown = knownWords.contains(wordKey);
+
+    // Update known words set based on swipe direction
+    if (known) {
+      knownWords.add(wordKey);
+    } else {
+      knownWords.remove(wordKey);
+    }
+
+    final nextIndex = _findNextUnfamiliarIndex(currentIndex);
+
+    // Update UI immediately for instant response
+    setState(() {
+      // Update knownCount to reflect current subset's known words only
+      if (widget.subsetWords != null && widget.subsetWords!.isNotEmpty) {
+        // For subset mode, count only words in current subset that are known
+        knownCount = words.where((w) => knownWords.contains(w.english)).length;
+      } else {
+        // For full level mode, use total known count
+        knownCount = knownWords.length;
+      }
+      if (nextIndex != -1) {
+        currentIndex = nextIndex;
+        showChinese = false;
+      } else {
+        // Check if all words in current subset are familiar
+        bool allFamiliar = true;
+        for (final word in words) {
+          if (!knownWords.contains(word.english)) {
+            allFamiliar = false;
+            break;
+          }
+        }
+        isFinished = allFamiliar;
+      }
+    });
+
+    // Perform async operations without blocking UI
+    _saveProgressAsync(known, wordKey);
+    // Reinforcement: count unfamiliar swipes (not known) beyond 2 triggers in summary list
+    if (!known) {
+      _incrementReinforceCounter(selectedLevel ?? '1', wordKey, 'unfamiliar').catchError((_) {});
+    }
+
+    // Aggregate session stats; commit when page is closed to avoid jank
+    if (known && !wasKnown) {
+      _sessionWordsLearned += 1;
+      _sessionCorrectAnswers += 1;
+      _sessionTotalAnswers += 1;
+
+      // Reschedule reminder with remaining words (async)
+      Future(() async {
+        try {
+          final settings = SettingsProvider.of(context);
+          if (settings.dailyGoal > 0 && settings.reminderTime != null) {
+            final stats = await LearningStatsService.getLearningStats();
+            final todayKey = _getDateKey(DateTime.now());
+            final learnedToday = stats.dailyWordsLearned[todayKey] ?? 0;
+            final remaining = (settings.dailyGoal - learnedToday).clamp(0, 100000);
+            final parts = settings.reminderTime!.split(':');
+            final time = TimeOfDay(hour: int.parse(parts[0]), minute: int.parse(parts[1]));
+            await NotificationsService.scheduleDailyReminder(
+              time: time,
+              remainingWords: remaining,
+            );
+          }
+        } catch (_) {}
+      });
+    }
+
+    // Auto-speak immediately if enabled
+    final settings = SettingsProvider.of(context);
+    if (settings.autoSpeak && !isFinished && currentIndex < words.length) {
+      speakWord(words[currentIndex].english);
+    }
+
+    // If subset finished, show inline completion panel
+    if (isFinished && (widget.subsetWords != null && widget.subsetWords!.isNotEmpty)) {
+      setState(() => showCompletionPanel = true);
+    }
+  }
+
   // Async method to save progress without blocking UI
   Future<void> _saveProgressAsync(bool known, String wordKey) async {
     try {
@@ -2403,10 +2490,11 @@ class _WordQuizPageState extends State<WordQuizPage> {
                     ),
                     direction: DismissDirection.horizontal,
                     onDismissed: (direction) {
+                      // 先處理滑動邏輯，然後立即更新 UI
                       if (direction == DismissDirection.startToEnd) {
-                        handleSwipe(true);
+                        _handleSwipeImmediate(true);
                       } else if (direction == DismissDirection.endToStart) {
-                        handleSwipe(false);
+                        _handleSwipeImmediate(false);
                       }
                     },
                     background: Container(
@@ -2800,29 +2888,74 @@ class _WordListPageState extends State<WordListPage> {
                 );
               },
             ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () async {
-          final choice = await _pickQuizMode(context);
-          if (choice == null) return;
-          final type = choice['type'] as String;
-          final immediate = choice['immediate'] as bool? ?? false;
-          if (!mounted) return;
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => QuizPage(
-                type: type,
-                level: widget.level,
-                quizSubset: widget.words,
-                letter: widget.currentLetter,
-                showImmediateAnswer: immediate,
-              ),
-            ),
-          );
-        },
-        label: const Text('測驗'),
-        icon: const Icon(Icons.quiz),
-        heroTag: 'quiz_fab',
+      floatingActionButton: Row(
+        mainAxisAlignment: MainAxisAlignment.end,
+        children: [
+          FloatingActionButton.extended(
+            onPressed: () async {
+              final choice = await _pickQuizMode(context);
+              if (choice == null) return;
+              final type = choice['type'] as String;
+              final immediate = choice['immediate'] as bool? ?? false;
+              if (!mounted) return;
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => QuizPage(
+                    type: type,
+                    level: widget.level,
+                    quizSubset: widget.words,
+                    letter: widget.currentLetter,
+                    showImmediateAnswer: immediate,
+                  ),
+                ),
+              );
+            },
+            label: const Text('測驗'),
+            icon: const Icon(Icons.quiz),
+            heroTag: 'quiz_fab',
+          ),
+          const SizedBox(width: 8),
+          FloatingActionButton.extended(
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => WordQuizPage(
+                    initialLevel: widget.level,
+                    subsetWords: widget.words,
+                    subsetLetter: widget.currentLetter,
+                    groupOrder: widget.groupOrder,
+                    randomMode: false,
+                  ),
+                ),
+              ).then((_) => _loadKnownWords());
+            },
+            label: const Text('順序學習'),
+            icon: const Icon(Icons.play_arrow),
+            heroTag: 'start_fab',
+          ),
+          const SizedBox(width: 8),
+          FloatingActionButton.extended(
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => WordQuizPage(
+                    initialLevel: widget.level,
+                    subsetWords: widget.words,
+                    subsetLetter: widget.currentLetter,
+                    groupOrder: widget.groupOrder,
+                    randomMode: true,
+                  ),
+                ),
+              ).then((_) => _loadKnownWords());
+            },
+            label: const Text('隨機學習'),
+            icon: const Icon(Icons.shuffle),
+            heroTag: 'random_fab',
+          ),
+        ],
       ),
     );
   }
