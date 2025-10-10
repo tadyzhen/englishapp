@@ -2029,8 +2029,13 @@ class _WordQuizPageState extends State<WordQuizPage> {
 
   int _findNextUnfamiliarIndex(int fromIndex) {
     if (widget.randomMode) {
-      // In random mode, find any unfamiliar word
-      for (int i = 0; i < words.length; i++) {
+      // In random mode, find the next unfamiliar word but avoid returning the current index
+      for (int i = fromIndex + 1; i < words.length; i++) {
+        if (!knownWords.contains(words[i].english)) {
+          return i;
+        }
+      }
+      for (int i = 0; i < fromIndex; i++) {
         if (!knownWords.contains(words[i].english)) {
           return i;
         }
