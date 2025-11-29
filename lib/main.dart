@@ -2102,6 +2102,19 @@ class _WordQuizPageState extends State<WordQuizPage> {
 
     // Perform async operations without blocking UI
     _saveProgressAsync(known, wordKey);
+
+    // Update SRS data for this word under the current level
+    try {
+      final level = selectedLevel ?? '1';
+      final srsMap = await LearningStatsService.getSrsDataForLevel(level);
+      final perWord = Map<String, dynamic>.from(srsMap[wordKey] ?? {});
+      final updated = LearningStatsService.updateSrsOnAnswer(
+        current: perWord,
+        isCorrect: known,
+      );
+      srsMap[wordKey] = updated;
+      await LearningStatsService.saveSrsDataForLevel(level, srsMap);
+    } catch (_) {}
     // Reinforcement: count unfamiliar swipes (not known) beyond 2 triggers in summary list
     if (!known) {
       try {
@@ -2189,6 +2202,21 @@ class _WordQuizPageState extends State<WordQuizPage> {
 
     // Perform async operations without blocking UI
     _saveProgressAsync(known, wordKey);
+
+    // Update SRS data for this word under the current level
+    () async {
+      try {
+        final level = selectedLevel ?? '1';
+        final srsMap = await LearningStatsService.getSrsDataForLevel(level);
+        final perWord = Map<String, dynamic>.from(srsMap[wordKey] ?? {});
+        final updated = LearningStatsService.updateSrsOnAnswer(
+          current: perWord,
+          isCorrect: known,
+        );
+        srsMap[wordKey] = updated;
+        await LearningStatsService.saveSrsDataForLevel(level, srsMap);
+      } catch (_) {}
+    }();
     // Reinforcement: count unfamiliar swipes (not known) beyond 2 triggers in summary list
     if (!known) {
       _incrementReinforceCounter(selectedLevel ?? '1', wordKey, 'unfamiliar').catchError((_) {});
@@ -3013,6 +3041,46 @@ class _ReinforceScreenState extends State<ReinforceScreen> {
       appBar: AppBar(
         title: const Text('加強學習'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.schedule),
+            onPressed: () async {
+              // Build a due list across all levels from SRS
+              final levels = ['1','2','3','4','5','6'];
+              String data = await rootBundle.loadString('assets/words.json');
+              List<dynamic> jsonResult = json.decode(data);
+              final allWords = jsonResult.map((item) => Word.fromJson(item)).toList();
+              final today = DateTime.now();
+              final List<Word> due = [];
+              for (final lv in levels) {
+                final srs = await LearningStatsService.getSrsDataForLevel(lv);
+                if (srs.isEmpty) continue;
+                srs.forEach((eng, meta) {
+                  try {
+                    if (LearningStatsService.isDue(Map<String,dynamic>.from(meta), today)) {
+                      final w = allWords.firstWhere(
+                        (w) => w.level == lv && w.english == eng,
+                        orElse: () => Word(level: lv, english: eng, pos: '', engPos: '', chinese: ''),
+                      );
+                      due.add(w);
+                    }
+                  } catch (_) {}
+                });
+              }
+              if (!mounted) return;
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => WordQuizPage(
+                    initialLevel: null,
+                    subsetWords: due,
+                    subsetLetter: '複習',
+                    randomMode: false,
+                  ),
+                ),
+              );
+            },
+            tooltip: '今天到期複習',
+          ),
           IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: loadFavoriteWords,

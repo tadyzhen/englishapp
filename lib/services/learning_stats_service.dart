@@ -364,6 +364,71 @@ class LearningStatsService {
     return 1000; // 假設每個等級有1000個單字
   }
 
+  // ===== Spaced Repetition (SRS) lightweight helpers =====
+  // We store per-word SRS data in SharedPreferences as json map per level
+  static const String _srsPrefix = 'srs_';
+
+  static Future<Map<String, dynamic>> getSrsDataForLevel(String level) async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString('$_srsPrefix$level');
+    if (raw == null || raw.isEmpty) return {};
+    try {
+      return Map<String, dynamic>.from(json.decode(raw));
+    } catch (_) {
+      return {};
+    }
+  }
+
+  static Future<void> saveSrsDataForLevel(String level, Map<String, dynamic> data) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('$_srsPrefix$level', json.encode(data));
+  }
+
+  // SM2-lite update: ease (1.3-2.5), intervalDays, repetitions, lastReviewedAt
+  static Map<String, dynamic> updateSrsOnAnswer({
+    required Map<String, dynamic> current,
+    required bool isCorrect,
+  }) {
+    final double ease = (current['ease'] ?? 2.3).toDouble();
+    final int reps = (current['reps'] ?? 0) as int;
+    final int interval = (current['interval'] ?? 0) as int;
+
+    double newEase = ease + (isCorrect ? 0.1 : -0.2);
+    if (newEase < 1.3) newEase = 1.3;
+    if (newEase > 2.5) newEase = 2.5;
+
+    int newReps = isCorrect ? reps + 1 : 0;
+    int newInterval;
+    if (!isCorrect) {
+      newInterval = 1; // review tomorrow on fail
+    } else if (newReps <= 1) {
+      newInterval = 1;
+    } else if (newReps == 2) {
+      newInterval = 3;
+    } else {
+      newInterval = (interval * newEase).round().clamp(1, 3650);
+    }
+
+    return {
+      'ease': newEase,
+      'reps': newReps,
+      'interval': newInterval,
+      'lastReviewedAt': DateTime.now().toIso8601String(),
+    };
+  }
+
+  static bool isDue(Map<String, dynamic> data, DateTime today) {
+    try {
+      final last = DateTime.parse((data['lastReviewedAt'] ?? today.toIso8601String()) as String);
+      final interval = (data['interval'] ?? 0) as int;
+      final dueDate = DateTime(last.year, last.month, last.day).add(Duration(days: interval));
+      final dToday = DateTime(today.year, today.month, today.day);
+      return !dueDate.isAfter(dToday);
+    } catch (_) {
+      return true;
+    }
+  }
+
   static Future<int> _getTotalFavorites() async {
     try {
       final favorites = await FirestoreSync.getFavorites();

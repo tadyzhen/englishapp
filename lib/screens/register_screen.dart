@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 class RegisterScreen extends StatefulWidget {
   final Future<void> Function() onRegisterSuccess;
@@ -17,6 +18,7 @@ class RegisterScreen extends StatefulWidget {
 
 class _RegisterScreenState extends State<RegisterScreen> {
   final _formKey = GlobalKey<FormState>();
+  final _nameController = TextEditingController();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   final _confirmPasswordController = TextEditingController();
@@ -33,6 +35,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   @override
   void dispose() {
+    _nameController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
     _confirmPasswordController.dispose();
@@ -54,10 +57,25 @@ class _RegisterScreenState extends State<RegisterScreen> {
     });
 
     try {
-      await FirebaseAuth.instance.createUserWithEmailAndPassword(
+      final credential = await FirebaseAuth.instance.createUserWithEmailAndPassword(
         email: _emailController.text.trim(),
         password: _passwordController.text.trim(),
       );
+      final user = credential.user;
+
+      // 儲存使用者基本資料到 Firestore，供好友/排行榜/班級使用
+      if (user != null) {
+        await FirebaseFirestore.instance.collection('users').doc(user.uid).set(
+          {
+            'uid': user.uid,
+            'email': user.email,
+            'displayName': _nameController.text.trim(),
+            'createdAt': FieldValue.serverTimestamp(),
+            'lastLogin': FieldValue.serverTimestamp(),
+          },
+          SetOptions(merge: true),
+        );
+      }
       
       if (mounted) {
         widget.onRegisterSuccess();
@@ -100,6 +118,29 @@ class _RegisterScreenState extends State<RegisterScreen> {
           child: ListView(
             children: [
               const SizedBox(height: 20),
+              TextFormField(
+                controller: _nameController,
+                decoration: const InputDecoration(
+                  labelText: '姓名 / 暱稱',
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.person),
+                ),
+                textInputAction: TextInputAction.next,
+                validator: (value) {
+                  final v = value?.trim() ?? '';
+                  if (v.isEmpty) {
+                    return '請輸入姓名或暱稱';
+                  }
+                  if (v.length < 2) {
+                    return '至少需要 2 個字元';
+                  }
+                  if (v.length > 20) {
+                    return '最多 20 個字元';
+                  }
+                  return null;
+                },
+              ),
+              const SizedBox(height: 16),
               TextFormField(
                 controller: _emailController,
                 decoration: const InputDecoration(

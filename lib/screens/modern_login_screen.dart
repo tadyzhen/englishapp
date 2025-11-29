@@ -136,6 +136,14 @@ class _ModernLoginScreenState extends State<ModernLoginScreen> with TickerProvid
         email: _emailController.text.trim(),
         password: _passwordController.text.trim(),
       );
+
+      // 確保在 Firestore 中有一筆對應的使用者資料（供好友搜尋 / 排行榜等使用）
+      try {
+        final user = FirebaseAuth.instance.currentUser;
+        if (user != null) {
+          await _updateUserProfile(user);
+        }
+      } catch (_) {}
       
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('login_method', 'email');

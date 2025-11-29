@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../main.dart';
 import 'account_screen.dart';
 import 'learning_stats_screen.dart';
+import 'friends_screen.dart';
 
 class MainNavigation extends StatefulWidget {
   const MainNavigation({super.key});
@@ -18,6 +19,7 @@ class _MainNavigationState extends State<MainNavigation> {
     const LearningStatsScreen(), // 學習統計
     const QuizOptionsPage(), // 測驗設定頁
     const ReinforceScreen(), // 加強頁面
+    const FriendsScreen(), // 好友
     const AccountScreen(),     // 帳號頁面
   ];
 
@@ -61,6 +63,11 @@ class _MainNavigationState extends State<MainNavigation> {
             icon: Icon(Icons.fitness_center_outlined),
             activeIcon: Icon(Icons.fitness_center),
             label: '加強',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.group_outlined),
+            activeIcon: Icon(Icons.group),
+            label: '好友',
           ),
           BottomNavigationBarItem(
             icon: Icon(Icons.person_outline),

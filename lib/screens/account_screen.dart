@@ -3,11 +3,59 @@ import 'package:firebase_auth/firebase_auth.dart';
 // Google Sign-In will be handled through Firebase Auth
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'modern_login_screen.dart';
 import '../main.dart' show SettingsDialog;
 
-class AccountScreen extends StatelessWidget {
+class AccountScreen extends StatefulWidget {
   const AccountScreen({Key? key}) : super(key: key);
+
+  @override
+  State<AccountScreen> createState() => _AccountScreenState();
+}
+
+class _AccountScreenState extends State<AccountScreen> {
+  User? _user;
+  bool _isGuest = true;
+  bool _isLoadingProfile = true;
+  String? _displayName;
+  String? _bio;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadProfile();
+  }
+
+  Future<void> _loadProfile() async {
+    final user = FirebaseAuth.instance.currentUser;
+    final isGuest = user?.isAnonymous ?? true;
+    String? name;
+    String? bio;
+
+    if (user != null && !isGuest) {
+      try {
+        final doc = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
+        final data = doc.data() ?? {};
+        name = (data['displayName'] as String?)?.trim();
+        bio = (data['bio'] as String?)?.trim();
+      } catch (_) {
+        // ignore, fallback below
+      }
+      name ??= user.displayName;
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _user = user;
+      _isGuest = isGuest;
+      _displayName = (name != null && name.isNotEmpty)
+          ? name
+          : (user?.email ?? '訪客用戶');
+      _bio = bio;
+      _isLoadingProfile = false;
+    });
+  }
 
   Future<void> _signOut(BuildContext context) async {
     try {
@@ -47,10 +95,106 @@ class AccountScreen extends StatelessWidget {
     }
   }
 
+  Future<void> _editProfile(BuildContext context) async {
+    if (_isGuest) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('訪客模式無法編輯個人資料，請先登入帳號')),
+      );
+      return;
+    }
+    final user = _user;
+    if (user == null) return;
+
+    final nameController = TextEditingController(text: _displayName ?? '');
+    final bioController = TextEditingController(text: _bio ?? '');
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: const Text('編輯個人資料'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: nameController,
+                  decoration: const InputDecoration(
+                    labelText: '暱稱',
+                    hintText: '顯示給好友與班級的名字',
+                  ),
+                  textInputAction: TextInputAction.next,
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: bioController,
+                  decoration: const InputDecoration(
+                    labelText: '簡介',
+                    hintText: '可以簡單介紹自己或學習目標',
+                  ),
+                  maxLines: 3,
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('儲存'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirmed != true) return;
+
+    final newName = nameController.text.trim();
+    final newBio = bioController.text.trim();
+    if (newName.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('暱稱不能為空白')),
+      );
+      return;
+    }
+
+    try {
+      // 更新 Firebase Auth displayName
+      await user.updateDisplayName(newName);
+      // 更新 Firestore 使用者文件
+      await FirebaseFirestore.instance.collection('users').doc(user.uid).set(
+        {
+          'displayName': newName,
+          'bio': newBio,
+          'lastLogin': FieldValue.serverTimestamp(),
+        },
+        SetOptions(merge: true),
+      );
+      if (!mounted) return;
+      setState(() {
+        _displayName = newName;
+        _bio = newBio.isEmpty ? null : newBio;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('已更新個人資料')),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('更新失敗，請稍後再試')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final user = FirebaseAuth.instance.currentUser;
-    final isGuest = user?.isAnonymous ?? true;
+    final user = _user;
+    final isGuest = _isGuest;
 
     return Scaffold(
       appBar: AppBar(
@@ -76,9 +220,9 @@ class AccountScreen extends StatelessWidget {
           ),
           const SizedBox(height: 16),
           Text(
-            !isGuest && user?.displayName != null && user!.displayName!.isNotEmpty
-                ? user!.displayName!
-                : (user?.email ?? '訪客用戶'),
+            _isLoadingProfile
+                ? '載入中...'
+                : (_displayName ?? (user?.email ?? '訪客用戶')),
             style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 8),
@@ -89,7 +233,31 @@ class AccountScreen extends StatelessWidget {
               fontWeight: FontWeight.w500,
             ),
           ),
-          const SizedBox(height: 32),
+          if (_bio != null && _bio!.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24.0),
+              child: Text(
+                _bio!,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: Colors.grey[700],
+                  fontSize: 14,
+                ),
+              ),
+            ),
+          ],
+          const SizedBox(height: 24),
+          if (!isGuest) ...[
+            ListTile(
+              leading: const Icon(Icons.person_outline),
+              title: const Text('編輯個人資料'),
+              subtitle: const Text('修改暱稱與個人簡介'),
+              trailing: const Icon(Icons.edit, size: 18),
+              onTap: () => _editProfile(context),
+            ),
+            const Divider(),
+          ],
           if (isGuest) ...[
             ListTile(
               leading: const Icon(Icons.login),
