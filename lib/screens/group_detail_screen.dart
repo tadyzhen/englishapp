@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import '../services/groups_service.dart';
+import '../utils/time_format.dart';
 
 class GroupDetailScreen extends StatefulWidget {
   final String groupId;
@@ -61,6 +63,37 @@ class _GroupDetailScreenState extends State<GroupDetailScreen>
     }
 
     return 0;
+  }
+
+  // 從 learningStats.levelStats 取得最近學習的等級（與 FriendsService 相同邏輯）
+  String? _extractCurrentLevel(Map<String, dynamic> data) {
+    final stats = data['learningStats'] as Map<String, dynamic>?;
+    if (stats == null) return null;
+    final levelStats = stats['levelStats'];
+    if (levelStats is! Map<String, dynamic>) return null;
+
+    String? latestLevel;
+    DateTime? latestTime;
+    levelStats.forEach((level, value) {
+      if (value is Map<String, dynamic>) {
+        final ts = value['lastStudied'];
+        DateTime? t;
+        if (ts is Timestamp) {
+          t = ts.toDate();
+        } else if (ts is String) {
+          try {
+            t = DateTime.parse(ts);
+          } catch (_) {}
+        }
+        if (t != null) {
+          if (latestTime == null || t.isAfter(latestTime!)) {
+            latestTime = t;
+            latestLevel = level.toString();
+          }
+        }
+      }
+    });
+    return latestLevel;
   }
 
   @override
@@ -239,6 +272,9 @@ class _GroupDetailScreenState extends State<GroupDetailScreen>
                 final totalWordsLearned = _extractTotalWordsLearned(data);
                 final stats = data['learningStats'] as Map<String, dynamic>?;
                 final currentStreak = (stats?['currentStreak'] as int?) ?? 0;
+                final currentLevel = _extractCurrentLevel(data);
+                final todaySeconds = (stats?['todayStudySeconds'] as int?) ?? 0;
+                final isOnline = (data['isOnline'] as bool?) ?? false;
                 return ListTile(
                   leading: CircleAvatar(
                     child: Text(displayName.isNotEmpty
@@ -246,7 +282,18 @@ class _GroupDetailScreenState extends State<GroupDetailScreen>
                         : '?'),
                   ),
                   title: Text(displayName),
-                  subtitle: Text('已學單字：$totalWordsLearned，連續天數：$currentStreak'),
+                  subtitle: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('已學單字：$totalWordsLearned，連續天數：$currentStreak'),
+                      const SizedBox(height: 2),
+                      _MemberStudyTimeRow(
+                        currentLevel: currentLevel,
+                        initialSeconds: todaySeconds,
+                        isOnline: isOnline,
+                      ),
+                    ],
+                  ),
                 );
               },
             );
@@ -471,6 +518,81 @@ class _GroupDetailScreenState extends State<GroupDetailScreen>
             ),
         ],
       ),
+    );
+  }
+}
+
+class _MemberStudyTimeRow extends StatefulWidget {
+  final String? currentLevel;
+  final int initialSeconds;
+  final bool isOnline;
+
+  const _MemberStudyTimeRow({
+    required this.currentLevel,
+    required this.initialSeconds,
+    required this.isOnline,
+  });
+
+  @override
+  State<_MemberStudyTimeRow> createState() => _MemberStudyTimeRowState();
+}
+
+class _MemberStudyTimeRowState extends State<_MemberStudyTimeRow> {
+  late int _seconds;
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _seconds = widget.initialSeconds;
+    _setupTimer();
+  }
+
+  @override
+  void didUpdateWidget(covariant _MemberStudyTimeRow oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.isOnline != widget.isOnline ||
+        oldWidget.initialSeconds != widget.initialSeconds) {
+      _seconds = widget.initialSeconds;
+      _setupTimer();
+    }
+  }
+
+  void _setupTimer() {
+    _timer?.cancel();
+    if (widget.isOnline) {
+      _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+        if (!mounted) return;
+        setState(() {
+          _seconds++;
+        });
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Text(
+          widget.currentLevel != null ? '等級 ${widget.currentLevel}' : '等級 -',
+          style: const TextStyle(fontSize: 12),
+        ),
+        const SizedBox(width: 12),
+        Text(
+          formatSecondsToHms(_seconds),
+          style: TextStyle(
+            fontSize: 12,
+            color: widget.isOnline ? Colors.green : Colors.grey,
+          ),
+        ),
+      ],
     );
   }
 }

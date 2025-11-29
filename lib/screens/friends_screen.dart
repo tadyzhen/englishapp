@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../services/friends_service.dart';
+import '../utils/time_format.dart';
 
 class FriendsScreen extends StatefulWidget {
   const FriendsScreen({super.key});
@@ -88,6 +90,8 @@ class _FriendsScreenState extends State<FriendsScreen> {
                               const Text('尚未填寫個人簡介'),
                             Text(
                                 '已學單字：${f.totalWordsLearned}，連續天數：${f.currentStreak}'),
+                            const SizedBox(height: 2),
+                            _FriendStudyTimeRow(friend: f),
                           ],
                         ),
                         // 排行榜與詳細資料之後再補
@@ -95,6 +99,76 @@ class _FriendsScreenState extends State<FriendsScreen> {
                     },
                   )),
       ),
+    );
+  }
+}
+
+class _FriendStudyTimeRow extends StatefulWidget {
+  final FriendSummary friend;
+
+  const _FriendStudyTimeRow({required this.friend});
+
+  @override
+  State<_FriendStudyTimeRow> createState() => _FriendStudyTimeRowState();
+}
+
+class _FriendStudyTimeRowState extends State<_FriendStudyTimeRow> {
+  late int _seconds;
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _seconds = widget.friend.todayStudySeconds;
+    _setupTimer();
+  }
+
+  @override
+  void didUpdateWidget(covariant _FriendStudyTimeRow oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.friend.isOnline != widget.friend.isOnline ||
+        oldWidget.friend.todayStudySeconds != widget.friend.todayStudySeconds) {
+      _seconds = widget.friend.todayStudySeconds;
+      _setupTimer();
+    }
+  }
+
+  void _setupTimer() {
+    _timer?.cancel();
+    if (widget.friend.isOnline) {
+      _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+        if (!mounted) return;
+        setState(() {
+          _seconds++;
+        });
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final f = widget.friend;
+    return Row(
+      children: [
+        Text(
+          f.currentLevel != null ? '等級 ${f.currentLevel}' : '等級 -',
+          style: const TextStyle(fontSize: 12),
+        ),
+        const SizedBox(width: 12),
+        Text(
+          formatSecondsToHms(_seconds),
+          style: TextStyle(
+            fontSize: 12,
+            color: f.isOnline ? Colors.green : Colors.grey,
+          ),
+        ),
+      ],
     );
   }
 }

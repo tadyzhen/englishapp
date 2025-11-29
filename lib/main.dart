@@ -6,6 +6,7 @@ import 'package:flutter/services.dart' show rootBundle, HapticFeedback;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:vibration/vibration.dart';
 import 'firebase_options.dart';
@@ -14,6 +15,7 @@ import 'screens/modern_login_screen.dart';
 import 'screens/main_navigation.dart';
 import 'services/learning_stats_service.dart';
 import 'services/notifications_service.dart';
+import 'utils/time_format.dart';
 
 Future<Map<String, dynamic>?> _pickQuizMode(BuildContext context) async {
   String selected = 'ch2en';
@@ -80,10 +82,13 @@ Future<Map<String, dynamic>?> _pickQuizMode(BuildContext context) async {
 }
 
 // Reinforcement helpers
-Future<void> _incrementReinforceCounter(String level, String wordKey, String type) async {
+Future<void> _incrementReinforceCounter(
+    String level, String wordKey, String type) async {
   try {
     final prefs = await SharedPreferences.getInstance();
-    final storageKey = type == 'wrong' ? 'reinforce_wrong_$level' : 'reinforce_unfamiliar_$level';
+    final storageKey = type == 'wrong'
+        ? 'reinforce_wrong_$level'
+        : 'reinforce_unfamiliar_$level';
     final raw = prefs.getString(storageKey);
     Map<String, dynamic> map = {};
     if (raw != null && raw.isNotEmpty) {
@@ -105,16 +110,21 @@ Future<List<String>> _loadReinforcementList(String level) async {
   final unRaw = prefs.getString('reinforce_unfamiliar_$level');
   final wrong = wrongRaw == null || wrongRaw.isEmpty
       ? <String, int>{}
-      : Map<String, int>.from((json.decode(wrongRaw) as Map).map((k, v) => MapEntry(k.toString(), (v as num).toInt())));
+      : Map<String, int>.from((json.decode(wrongRaw) as Map)
+          .map((k, v) => MapEntry(k.toString(), (v as num).toInt())));
   final un = unRaw == null || unRaw.isEmpty
       ? <String, int>{}
-      : Map<String, int>.from((json.decode(unRaw) as Map).map((k, v) => MapEntry(k.toString(), (v as num).toInt())));
+      : Map<String, int>.from((json.decode(unRaw) as Map)
+          .map((k, v) => MapEntry(k.toString(), (v as num).toInt())));
   final Set<String> result = {};
-  wrong.forEach((w, c) { if (c >= 2) result.add(w); });
-  un.forEach((w, c) { if (c >= 2) result.add(w); });
+  wrong.forEach((w, c) {
+    if (c >= 2) result.add(w);
+  });
+  un.forEach((w, c) {
+    if (c >= 2) result.add(w);
+  });
   return result.toList()..sort();
 }
-
 
 // Utility class for shared functionality
 class AppUtils {
@@ -213,10 +223,12 @@ class AppSettings extends ChangeNotifier {
       await prefs.remove('reminderTime');
       await NotificationsService.cancelDailyReminder();
     } else {
-      reminderTime = '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
+      reminderTime =
+          '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
       await prefs.setString('reminderTime', reminderTime!);
       // Schedule with placeholder remaining (will be rescheduled when progress updates)
-      await NotificationsService.scheduleDailyReminder(time: time, remainingWords: 0);
+      await NotificationsService.scheduleDailyReminder(
+          time: time, remainingWords: 0);
     }
     notifyListeners();
   }
@@ -378,15 +390,37 @@ class AuthWrapper extends StatefulWidget {
   State<AuthWrapper> createState() => _AuthWrapperState();
 }
 
-class _AuthWrapperState extends State<AuthWrapper> {
+class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
   bool _isLoading = true;
   String? _loginMethod;
   String? _handledUid; // ensure we only prompt once per user per session
+  Timer? _studyTimer;
+  int _todayStudySeconds = 0;
+  bool _hasStartedForUser = false;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _checkAuthState();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _stopStudyTimerAndPersist();
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _onAppResumed();
+    } else if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.detached) {
+      _stopStudyTimerAndPersist();
+    }
   }
 
   Future<void> _checkAuthState() async {
@@ -415,6 +449,77 @@ class _AuthWrapperState extends State<AuthWrapper> {
   Future<void> _refreshAuthState() async {
     // Re-check the auth state from storage and rebuild
     await _checkAuthState();
+  }
+
+  Future<void> _ensureTodayLoaded() async {
+    final prefs = await SharedPreferences.getInstance();
+    final now = DateTime.now();
+    final todayKey =
+        '${now.year.toString().padLeft(4, '0')}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+    final storedDate = prefs.getString('study_today_date');
+    if (storedDate != todayKey) {
+      _todayStudySeconds = 0;
+      await prefs.setString('study_today_date', todayKey);
+      await prefs.setInt('study_today_seconds', 0);
+      return;
+    }
+    _todayStudySeconds = prefs.getInt('study_today_seconds') ?? 0;
+  }
+
+  Future<void> _onAppResumed() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      return;
+    }
+    await _ensureTodayLoaded();
+    // 標記線上狀態，但不在這裡寫入 todayStudySeconds，以減少寫入次數
+    try {
+      await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
+        'isOnline': true,
+        'onlineUpdatedAt': FieldValue.serverTimestamp(),
+        'learningStats': {
+          // 累積到目前為止的秒數（今天之前的 session）
+          'todayStudySeconds': _todayStudySeconds,
+          // 這次啟動的開始時間（給朋友端自行推算用）
+          'todayStudyStartAt': FieldValue.serverTimestamp(),
+        },
+      }, SetOptions(merge: true));
+    } catch (_) {}
+
+    _startStudyTimer();
+  }
+
+  void _startStudyTimer() {
+    _studyTimer?.cancel();
+    _studyTimer = Timer.periodic(const Duration(seconds: 1), (timer) async {
+      _todayStudySeconds++;
+      // 只更新本機，避免頻繁打 Firestore
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setInt('study_today_seconds', _todayStudySeconds);
+    });
+  }
+
+  Future<void> _stopStudyTimerAndPersist() async {
+    _studyTimer?.cancel();
+    _studyTimer = null;
+
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    await _ensureTodayLoaded();
+
+    // 將本機累積秒數寫回 Firestore，並更新離線狀態
+    try {
+      await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
+        'learningStats': {
+          'todayStudySeconds': _todayStudySeconds,
+          // 結束時清掉 startAt，避免離線時還被當成正在計時
+          'todayStudyStartAt': null,
+        },
+        'isOnline': false,
+        'onlineUpdatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+    } catch (_) {}
   }
 
   @override
@@ -447,6 +552,13 @@ class _AuthWrapperState extends State<AuthWrapper> {
           if (_handledUid != user.uid) {
             WidgetsBinding.instance.addPostFrameCallback((_) {
               _promptCloudChoiceOnce(user.uid);
+            });
+          }
+          // 確保登入狀態下有啟動學習時間追蹤
+          if (!_hasStartedForUser) {
+            _hasStartedForUser = true;
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              _onAppResumed();
             });
           }
           return const MainNavigation();
@@ -587,7 +699,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
         return;
       }
 
-      final levels = ['1','2','3','4','5','6'];
+      final levels = ['1', '2', '3', '4', '5', '6'];
 
       if (choice == 'useCloud') {
         // Handle legacy mapping if needed
@@ -605,7 +717,9 @@ class _AuthWrapperState extends State<AuthWrapper> {
               wordToLevel[w.english] = w.level;
             }
             final legacyList = cloudKnown['_legacy'] ?? <String>[];
-            final Map<String, List<String>> migrated = { for (var lv in levels) lv: <String>[] };
+            final Map<String, List<String>> migrated = {
+              for (var lv in levels) lv: <String>[]
+            };
             for (final eng in legacyList) {
               final lv = wordToLevel[eng];
               if (lv != null && migrated.containsKey(lv)) {
@@ -663,6 +777,7 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
   int _totalKnown = 0;
   int _totalWords = 0;
   VoidCallback? _statsListener;
+  int _cachedTodaySeconds = 0;
 
   @override
   void initState() {
@@ -673,6 +788,7 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
       if (mounted) _computeProgress();
     };
     LearningStatsService.statsVersion.addListener(_statsListener!);
+    _loadTodaySeconds();
   }
 
   @override
@@ -680,6 +796,7 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
     super.didChangeDependencies();
     // Recompute when this page becomes active again
     _computeProgress();
+    _loadTodaySeconds();
   }
 
   @override
@@ -695,7 +812,8 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
     String data = await rootBundle.loadString('assets/words.json');
     List<dynamic> jsonResult = json.decode(data);
     final allWords = jsonResult.map((item) => Word.fromJson(item)).toList();
-    final totals = <String, int>{}..addEntries(levels.map((l) => MapEntry(l, 0)));
+    final totals = <String, int>{}
+      ..addEntries(levels.map((l) => MapEntry(l, 0)));
     for (final w in allWords) {
       if (totals.containsKey(w.level)) {
         totals[w.level] = (totals[w.level] ?? 0) + 1;
@@ -803,9 +921,11 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
 
     String data = await rootBundle.loadString('assets/words.json');
     List<dynamic> jsonResult = json.decode(data);
-    List<Word> allWords = jsonResult.map((item) => Word.fromJson(item)).toList();
+    List<Word> allWords =
+        jsonResult.map((item) => Word.fromJson(item)).toList();
     setState(() {
-      favoriteWords = allWords.where((w) => mergedFavs.contains(w.english)).toList();
+      favoriteWords =
+          allWords.where((w) => mergedFavs.contains(w.english)).toList();
     });
   }
 
@@ -817,7 +937,6 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
 
   // （已移除）_getWordCountForLevel：測驗頁面自帶計數函式
 
-
   // (removed) _showQuizOptions: 測驗設定已移至 QuizOptionsPage 分頁
 
   Future<List<Word>> _loadWordsForLevel(String level) async {
@@ -827,6 +946,15 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
         .map((item) => Word.fromJson(item))
         .where((word) => word.level == level)
         .toList();
+  }
+
+  Future<void> _loadTodaySeconds() async {
+    final prefs = await SharedPreferences.getInstance();
+    final seconds = prefs.getInt('study_today_seconds') ?? 0;
+    if (!mounted) return;
+    setState(() {
+      _cachedTodaySeconds = seconds;
+    });
   }
 
   @override
@@ -862,6 +990,13 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
+            Align(
+              alignment: Alignment.centerLeft,
+              child: _TodayStudyTimeBanner(
+                initialSeconds: _cachedTodaySeconds,
+              ),
+            ),
+            const SizedBox(height: 16),
             // 總進度（標題下方長條進度）
             Builder(builder: (context) {
               final total = _totalWords;
@@ -870,7 +1005,8 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('目前單字總進度：$known / $total (${(progress * 100).toStringAsFixed(1)}%)'),
+                  Text(
+                      '目前單字總進度：$known / $total (${(progress * 100).toStringAsFixed(1)}%)'),
                   const SizedBox(height: 8),
                   LinearProgressIndicator(
                     value: progress,
@@ -897,7 +1033,8 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
                       Navigator.push(
                         context,
                         MaterialPageRoute(
-                          builder: (_) => AlphabetGroupsPage(level: level, words: words),
+                          builder: (_) =>
+                              AlphabetGroupsPage(level: level, words: words),
                         ),
                       ).then((_) => _computeProgress());
                     },
@@ -953,13 +1090,18 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
                               Builder(builder: (context) {
                                 final total = _levelTotals[level] ?? 0;
                                 final known = _levelKnowns[level] ?? 0;
-                                final progress = total == 0 ? 0.0 : known / total;
+                                final progress =
+                                    total == 0 ? 0.0 : known / total;
                                 return Column(
                                   children: [
-                                    LinearProgressIndicator(value: progress, minHeight: 8),
+                                    LinearProgressIndicator(
+                                        value: progress, minHeight: 8),
                                     const SizedBox(height: 6),
-                                    Text('$known / $total (${(progress * 100).toStringAsFixed(0)}%)',
-                                        style: Theme.of(context).textTheme.bodySmall),
+                                    Text(
+                                        '$known / $total (${(progress * 100).toStringAsFixed(0)}%)',
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .bodySmall),
                                   ],
                                 );
                               }),
@@ -980,11 +1122,74 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
   }
 }
 
+class _TodayStudyTimeBanner extends StatefulWidget {
+  final int initialSeconds;
+
+  const _TodayStudyTimeBanner({required this.initialSeconds});
+
+  @override
+  State<_TodayStudyTimeBanner> createState() => _TodayStudyTimeBannerState();
+}
+
+class _TodayStudyTimeBannerState extends State<_TodayStudyTimeBanner> {
+  late int _seconds;
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _seconds = widget.initialSeconds;
+    _startTimer();
+  }
+
+  void _startTimer() {
+    _timer?.cancel();
+    _timer = Timer.periodic(const Duration(seconds: 1), (timer) async {
+      final prefs = await SharedPreferences.getInstance();
+      final current = prefs.getInt('study_today_seconds') ?? 0;
+      if (!mounted) return;
+      setState(() {
+        _seconds = current;
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.primary.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.timer, size: 18),
+          const SizedBox(width: 8),
+          Text(
+            '今日學習時間：${formatSecondsToHms(_seconds)}',
+            style: theme.textTheme.bodyMedium,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 // A–Z 子集合頁面：點等級後先列表
 class AlphabetGroupsPage extends StatelessWidget {
   final String level;
   final List<Word> words;
-  const AlphabetGroupsPage({super.key, required this.level, required this.words});
+  const AlphabetGroupsPage(
+      {super.key, required this.level, required this.words});
 
   Map<String, List<Word>> _groupByAlphabet(List<Word> words) {
     final map = <String, List<Word>>{};
@@ -1001,7 +1206,8 @@ class AlphabetGroupsPage extends StatelessWidget {
     }
     // 排序每組
     for (final k in map.keys) {
-      map[k]!.sort((a, b) => a.english.toLowerCase().compareTo(b.english.toLowerCase()));
+      map[k]!.sort(
+          (a, b) => a.english.toLowerCase().compareTo(b.english.toLowerCase()));
     }
     return map;
   }
@@ -1028,7 +1234,8 @@ class AlphabetGroupsPage extends StatelessWidget {
               final letter = letters[index];
               final list = grouped[letter]!;
               final total = list.length;
-              final known = list.where((w) => knownSet.contains(w.english)).length;
+              final known =
+                  list.where((w) => knownSet.contains(w.english)).length;
               final progress = total == 0 ? 0.0 : known / total;
               return ListTile(
                 title: Text('$letter 組'),
@@ -1038,7 +1245,8 @@ class AlphabetGroupsPage extends StatelessWidget {
                     const SizedBox(height: 4),
                     LinearProgressIndicator(value: progress, minHeight: 6),
                     const SizedBox(height: 4),
-                    Text('$known / $total (${(progress * 100).toStringAsFixed(0)}%)'),
+                    Text(
+                        '$known / $total (${(progress * 100).toStringAsFixed(0)}%)'),
                   ],
                 ),
                 trailing: const Icon(Icons.arrow_forward_ios, size: 16),
@@ -1046,7 +1254,11 @@ class AlphabetGroupsPage extends StatelessWidget {
                   Navigator.push(
                     context,
                     MaterialPageRoute(
-                      builder: (_) => WordListPage(level: level, words: list, groupOrder: letters, currentLetter: letter),
+                      builder: (_) => WordListPage(
+                          level: level,
+                          words: list,
+                          groupOrder: letters,
+                          currentLetter: letter),
                     ),
                   );
                 },
@@ -1084,7 +1296,10 @@ class _ReinforceEntryPageState extends State<ReinforceEntryPage> {
       final targets = await _loadReinforcementList(widget.level);
       String data = await rootBundle.loadString('assets/words.json');
       final List<dynamic> jsonResult = json.decode(data);
-      final all = jsonResult.map((e) => Word.fromJson(e)).where((w) => w.level == widget.level).toList();
+      final all = jsonResult
+          .map((e) => Word.fromJson(e))
+          .where((w) => w.level == widget.level)
+          .toList();
       setState(() {
         _targets = targets;
         _allLevelWords = all;
@@ -1100,7 +1315,9 @@ class _ReinforceEntryPageState extends State<ReinforceEntryPage> {
     return Scaffold(
       appBar: AppBar(
         title: Text('等級 ${widget.level} 補強 (${_targets.length})'),
-        actions: [IconButton(onPressed: _load, icon: const Icon(Icons.refresh))],
+        actions: [
+          IconButton(onPressed: _load, icon: const Icon(Icons.refresh))
+        ],
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
@@ -1110,7 +1327,14 @@ class _ReinforceEntryPageState extends State<ReinforceEntryPage> {
                   itemCount: _targets.length,
                   itemBuilder: (context, index) {
                     final word = _targets[index];
-                    final w = _allLevelWords.firstWhere((e) => e.english == word, orElse: () => Word(level: widget.level, english: word, pos: '', engPos: '', chinese: ''));
+                    final w = _allLevelWords.firstWhere(
+                        (e) => e.english == word,
+                        orElse: () => Word(
+                            level: widget.level,
+                            english: word,
+                            pos: '',
+                            engPos: '',
+                            chinese: ''));
                     return ListTile(
                       title: Text(w.english),
                       subtitle: Text(w.chinese),
@@ -1143,9 +1367,37 @@ class _QuizOptionsPageState extends State<QuizOptionsPage> {
   int questionCount = 10;
   int maxQuestions = 10;
   String quizType = 'ch2en'; // ch2en, en2ch, listening, fillin
-  final TextEditingController countController = TextEditingController(text: '10');
-  List<String> letters = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 
-                         'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z', '全部'];
+  final TextEditingController countController =
+      TextEditingController(text: '10');
+  List<String> letters = [
+    'A',
+    'B',
+    'C',
+    'D',
+    'E',
+    'F',
+    'G',
+    'H',
+    'I',
+    'J',
+    'K',
+    'L',
+    'M',
+    'N',
+    'O',
+    'P',
+    'Q',
+    'R',
+    'S',
+    'T',
+    'U',
+    'V',
+    'W',
+    'X',
+    'Y',
+    'Z',
+    '全部'
+  ];
   String? selectedLetter = '全部';
   bool useFavorites = false; // 來源：收藏
   bool _immediateAnswer = false; // 立刻顯示答案
@@ -1158,17 +1410,18 @@ class _QuizOptionsPageState extends State<QuizOptionsPage> {
 
   Future<void> _updateMaxQuestions() async {
     if (!mounted) return;
-    
+
     int count;
-    if (selectedLevel == '全部' && (selectedLetter == null || selectedLetter == '全部')) {
+    if (selectedLevel == '全部' &&
+        (selectedLetter == null || selectedLetter == '全部')) {
       // 如果等級和字母都選擇「全部」，則使用固定的大題數
       count = 100; // 或其他你認為合適的數字
     } else {
       count = await _getWordCountForLevel(selectedLevel ?? '全部');
     }
-    
+
     if (!mounted) return;
-    
+
     setState(() {
       maxQuestions = count;
       if (questionCount > maxQuestions) {
@@ -1193,28 +1446,30 @@ class _QuizOptionsPageState extends State<QuizOptionsPage> {
   void _startQuiz() async {
     final level = selectedLevel == '全部' ? null : selectedLevel;
     final letter = selectedLetter == '全部' ? null : selectedLetter;
-    
+
     // Build the subset
     String data = await rootBundle.loadString('assets/words.json');
     List<dynamic> jsonResult = json.decode(data);
     List<Word> all = jsonResult.map((item) => Word.fromJson(item)).toList();
-    
+
     // If use favorites, narrow pool first
     if (useFavorites) {
       final prefs = await SharedPreferences.getInstance();
       final favs = prefs.getStringList('favorite_words') ?? <String>[];
       all = all.where((w) => favs.contains(w.english)).toList();
     }
-    
+
     // 過濾單字
     List<Word> filtered = all.where((w) {
       bool matchesLevel = level == null || w.level == level;
-      bool matchesLetter = letter == null || 
-          (w.english.isNotEmpty && w.english.length > 0 && letter.length > 0 &&
-           w.english[0].toUpperCase() == letter[0].toUpperCase());
+      bool matchesLetter = letter == null ||
+          (w.english.isNotEmpty &&
+              w.english.length > 0 &&
+              letter.length > 0 &&
+              w.english[0].toUpperCase() == letter[0].toUpperCase());
       return matchesLevel && matchesLetter;
     }).toList();
-    
+
     // 確保有足夠的單字
     if (filtered.isEmpty) {
       if (mounted) {
@@ -1225,19 +1480,19 @@ class _QuizOptionsPageState extends State<QuizOptionsPage> {
       return;
     }
     if (!mounted) return;
-    
+
     // 如果選擇了特定等級且字母為「全部」，則使用用戶選擇的題數
     // 否則使用所有符合條件的單字
-    final int actualQuestionCount = 
-        (level != null && (letter == null || letter == '全部')) 
-            ? questionCount 
+    final int actualQuestionCount =
+        (level != null && (letter == null || letter == '全部'))
+            ? questionCount
             : filtered.length;
-    
+
     // 確保不超過可用單字數量
-    final int finalQuestionCount = actualQuestionCount > filtered.length 
-        ? filtered.length 
+    final int finalQuestionCount = actualQuestionCount > filtered.length
+        ? filtered.length
         : actualQuestionCount;
-    
+
     // 如果用戶選擇的題數大於可用單字數量，顯示提示
     if (actualQuestionCount > filtered.length && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1247,7 +1502,7 @@ class _QuizOptionsPageState extends State<QuizOptionsPage> {
         ),
       );
     }
-    
+
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -1272,7 +1527,8 @@ class _QuizOptionsPageState extends State<QuizOptionsPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('1. 選擇測驗等級', style: TextStyle(fontWeight: FontWeight.bold)),
+            const Text('1. 選擇測驗等級',
+                style: TextStyle(fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
             Wrap(
               spacing: 8.0,
@@ -1292,8 +1548,10 @@ class _QuizOptionsPageState extends State<QuizOptionsPage> {
             ),
             const SizedBox(height: 16),
             // 只有在選擇了特定等級且字母為「全部」時才顯示題數選擇
-            if (selectedLevel != '全部' && (selectedLetter == null || selectedLetter == '全部')) ...[
-              const Text('2. 選擇測驗題數', style: TextStyle(fontWeight: FontWeight.bold)),
+            if (selectedLevel != '全部' &&
+                (selectedLetter == null || selectedLetter == '全部')) ...[
+              const Text('2. 選擇測驗題數',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
               const SizedBox(height: 8),
               Row(
                 children: [
@@ -1334,7 +1592,8 @@ class _QuizOptionsPageState extends State<QuizOptionsPage> {
               ),
               const SizedBox(height: 16),
             ],
-            const Text('3. 選擇測驗模式', style: TextStyle(fontWeight: FontWeight.bold)),
+            const Text('3. 選擇測驗模式',
+                style: TextStyle(fontWeight: FontWeight.bold)),
             RadioListTile<String>(
               title: const Text('題目顯示中文（選英文）'),
               value: 'ch2en',
@@ -1367,7 +1626,8 @@ class _QuizOptionsPageState extends State<QuizOptionsPage> {
               onChanged: (v) => setState(() => _immediateAnswer = v),
             ),
             const SizedBox(height: 12),
-            const Text('4. 題庫來源', style: TextStyle(fontWeight: FontWeight.bold)),
+            const Text('4. 題庫來源',
+                style: TextStyle(fontWeight: FontWeight.bold)),
             SwitchListTile(
               title: const Text('使用收藏的單字'),
               subtitle: const Text('開啟後僅從收藏中出題（可再套用等級/字母條件）'),
@@ -1377,7 +1637,8 @@ class _QuizOptionsPageState extends State<QuizOptionsPage> {
                 await _updateMaxQuestions();
               },
             ),
-            const Text('5. 選擇測驗字母', style: TextStyle(fontWeight: FontWeight.bold)),
+            const Text('5. 選擇測驗字母',
+                style: TextStyle(fontWeight: FontWeight.bold)),
             FutureBuilder(
               future: _getLetters(),
               builder: (context, snapshot) {
@@ -1419,8 +1680,35 @@ class _QuizOptionsPageState extends State<QuizOptionsPage> {
   }
 
   Future<List<String>> _getLetters() async {
-    return ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 
-            'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z', '全部'];
+    return [
+      'A',
+      'B',
+      'C',
+      'D',
+      'E',
+      'F',
+      'G',
+      'H',
+      'I',
+      'J',
+      'K',
+      'L',
+      'M',
+      'N',
+      'O',
+      'P',
+      'Q',
+      'R',
+      'S',
+      'T',
+      'U',
+      'V',
+      'W',
+      'X',
+      'Y',
+      'Z',
+      '全部'
+    ];
   }
 }
 
@@ -1815,11 +2103,10 @@ class _WordQuizPageState extends State<WordQuizPage> {
     return '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
   }
 
-
   // Open Cambridge Dictionary for the current word in WebView
   Future<void> _openDictionary() async {
     try {
-      final word = words.isNotEmpty && currentIndex < words.length 
+      final word = words.isNotEmpty && currentIndex < words.length
           ? words[currentIndex].english.split(' ').first
           : 'example';
       await Navigator.push(
@@ -1855,7 +2142,7 @@ class _WordQuizPageState extends State<WordQuizPage> {
     await flutterTts.setPitch(settings.speechPitch);
     await flutterTts.setVolume(settings.speechVolume);
     await flutterTts.awaitSpeakCompletion(true);
-    
+
     // Configure audio session to not pause background music
     await flutterTts.setIosAudioCategory(
       IosTextToSpeechAudioCategory.playback,
@@ -1866,7 +2153,7 @@ class _WordQuizPageState extends State<WordQuizPage> {
       ],
       IosTextToSpeechAudioMode.spokenAudio,
     );
-    
+
     if (settings.ttsVoice != null) {
       await flutterTts.setVoice(settings.ttsVoice!);
     }
@@ -1898,7 +2185,8 @@ class _WordQuizPageState extends State<WordQuizPage> {
     flutterTts.stop();
     // On leaving the page, commit a single aggregated progress update
     try {
-      final durationSeconds = DateTime.now().difference(_sessionStartTime).inSeconds;
+      final durationSeconds =
+          DateTime.now().difference(_sessionStartTime).inSeconds;
       final minutes = (durationSeconds / 60).ceil();
       final studyMinutes = minutes > 0 ? minutes : 1;
       if (_sessionWordsLearned > 0 || studyMinutes > 0) {
@@ -1953,7 +2241,7 @@ class _WordQuizPageState extends State<WordQuizPage> {
     } else {
       wordList = List<Word>.from(temp[level] ?? []);
     }
-    
+
     // Apply random mode if enabled
     if (widget.randomMode) {
       wordList.shuffle();
@@ -1996,7 +2284,8 @@ class _WordQuizPageState extends State<WordQuizPage> {
     int subsetKnownCount = 0;
     if (widget.subsetWords != null && widget.subsetWords!.isNotEmpty) {
       // For subset mode, count only words in current subset that are known
-      subsetKnownCount = wordList.where((w) => known.contains(w.english)).length;
+      subsetKnownCount =
+          wordList.where((w) => known.contains(w.english)).length;
     } else {
       // For full level mode, use total known count
       subsetKnownCount = known.length;
@@ -2016,7 +2305,8 @@ class _WordQuizPageState extends State<WordQuizPage> {
     });
 
     // Show inline completion panel if subset already finished on load
-    if ((widget.subsetWords != null && widget.subsetWords!.isNotEmpty) && isFinished) {
+    if ((widget.subsetWords != null && widget.subsetWords!.isNotEmpty) &&
+        isFinished) {
       setState(() => showCompletionPanel = true);
     }
 
@@ -2057,7 +2347,6 @@ class _WordQuizPageState extends State<WordQuizPage> {
       return -1; // All words are familiar
     }
   }
-
 
   Future<void> handleSwipe(bool known) async {
     if (isFinished) return;
@@ -2118,7 +2407,8 @@ class _WordQuizPageState extends State<WordQuizPage> {
     // Reinforcement: count unfamiliar swipes (not known) beyond 2 triggers in summary list
     if (!known) {
       try {
-        await _incrementReinforceCounter(selectedLevel ?? '1', wordKey, 'unfamiliar');
+        await _incrementReinforceCounter(
+            selectedLevel ?? '1', wordKey, 'unfamiliar');
       } catch (_) {}
     }
 
@@ -2135,9 +2425,11 @@ class _WordQuizPageState extends State<WordQuizPage> {
           final stats = await LearningStatsService.getLearningStats();
           final todayKey = _getDateKey(DateTime.now());
           final learnedToday = stats.dailyWordsLearned[todayKey] ?? 0;
-          final remaining = (settings.dailyGoal - learnedToday).clamp(0, 100000);
+          final remaining =
+              (settings.dailyGoal - learnedToday).clamp(0, 100000);
           final parts = settings.reminderTime!.split(':');
-          final time = TimeOfDay(hour: int.parse(parts[0]), minute: int.parse(parts[1]));
+          final time =
+              TimeOfDay(hour: int.parse(parts[0]), minute: int.parse(parts[1]));
           await NotificationsService.scheduleDailyReminder(
             time: time,
             remainingWords: remaining,
@@ -2153,7 +2445,8 @@ class _WordQuizPageState extends State<WordQuizPage> {
     }
 
     // If subset finished, show inline completion panel
-    if (isFinished && (widget.subsetWords != null && widget.subsetWords!.isNotEmpty)) {
+    if (isFinished &&
+        (widget.subsetWords != null && widget.subsetWords!.isNotEmpty)) {
       setState(() => showCompletionPanel = true);
     }
   }
@@ -2219,7 +2512,8 @@ class _WordQuizPageState extends State<WordQuizPage> {
     }();
     // Reinforcement: count unfamiliar swipes (not known) beyond 2 triggers in summary list
     if (!known) {
-      _incrementReinforceCounter(selectedLevel ?? '1', wordKey, 'unfamiliar').catchError((_) {});
+      _incrementReinforceCounter(selectedLevel ?? '1', wordKey, 'unfamiliar')
+          .catchError((_) {});
     }
 
     // Aggregate session stats; commit when page is closed to avoid jank
@@ -2236,9 +2530,11 @@ class _WordQuizPageState extends State<WordQuizPage> {
             final stats = await LearningStatsService.getLearningStats();
             final todayKey = _getDateKey(DateTime.now());
             final learnedToday = stats.dailyWordsLearned[todayKey] ?? 0;
-            final remaining = (settings.dailyGoal - learnedToday).clamp(0, 100000);
+            final remaining =
+                (settings.dailyGoal - learnedToday).clamp(0, 100000);
             final parts = settings.reminderTime!.split(':');
-            final time = TimeOfDay(hour: int.parse(parts[0]), minute: int.parse(parts[1]));
+            final time = TimeOfDay(
+                hour: int.parse(parts[0]), minute: int.parse(parts[1]));
             await NotificationsService.scheduleDailyReminder(
               time: time,
               remainingWords: remaining,
@@ -2255,7 +2551,8 @@ class _WordQuizPageState extends State<WordQuizPage> {
     }
 
     // If subset finished, show inline completion panel
-    if (isFinished && (widget.subsetWords != null && widget.subsetWords!.isNotEmpty)) {
+    if (isFinished &&
+        (widget.subsetWords != null && widget.subsetWords!.isNotEmpty)) {
       setState(() => showCompletionPanel = true);
     }
   }
@@ -2270,8 +2567,8 @@ class _WordQuizPageState extends State<WordQuizPage> {
 
       // Cloud sync (fire and forget)
       if (selectedLevel != null && selectedLevel!.isNotEmpty) {
-        FirestoreSync
-                .uploadKnownWordsForLevel(selectedLevel!, knownWords.toList())
+        FirestoreSync.uploadKnownWordsForLevel(
+                selectedLevel!, knownWords.toList())
             .catchError((e) {
           // Silently handle errors for offline fallback
         });
@@ -2313,7 +2610,7 @@ class _WordQuizPageState extends State<WordQuizPage> {
   }
 
   Widget _buildActionButton(
-    String text, IconData icon, Color color, VoidCallback onPressed) {
+      String text, IconData icon, Color color, VoidCallback onPressed) {
     return SizedBox(
       width: 220,
       height: 52,
@@ -2415,26 +2712,30 @@ class _WordQuizPageState extends State<WordQuizPage> {
                         Colors.blue,
                         () async {
                           // Reset known words for current subset only
-                          if (widget.subsetWords != null && widget.subsetWords!.isNotEmpty) {
+                          if (widget.subsetWords != null &&
+                              widget.subsetWords!.isNotEmpty) {
                             // Remove only current subset words from knownWords
                             for (final word in words) {
                               knownWords.remove(word.english);
                             }
-                            
+
                             // Update known count for current subset
                             knownCount = 0;
-                            
+
                             // Save updated progress
                             final prefs = await SharedPreferences.getInstance();
                             String key = 'known_${selectedLevel ?? ''}';
                             await prefs.setStringList(key, knownWords.toList());
-                            
+
                             // Cloud sync
-                            if (selectedLevel != null && selectedLevel!.isNotEmpty) {
-                              FirestoreSync.uploadKnownWordsForLevel(selectedLevel!, knownWords.toList()).catchError((e) {});
+                            if (selectedLevel != null &&
+                                selectedLevel!.isNotEmpty) {
+                              FirestoreSync.uploadKnownWordsForLevel(
+                                      selectedLevel!, knownWords.toList())
+                                  .catchError((e) {});
                             }
                           }
-                          
+
                           setState(() {
                             showCompletionPanel = false;
                             currentIndex = 0;
@@ -2453,22 +2754,28 @@ class _WordQuizPageState extends State<WordQuizPage> {
                           Colors.green,
                           () async {
                             // Find next letter in group order
-                            final currentIndex = widget.groupOrder!.indexOf(widget.subsetLetter!);
-                            if (currentIndex >= 0 && currentIndex + 1 < widget.groupOrder!.length) {
-                              final nextLetter = widget.groupOrder![currentIndex + 1];
-                              
+                            final currentIndex = widget.groupOrder!
+                                .indexOf(widget.subsetLetter!);
+                            if (currentIndex >= 0 &&
+                                currentIndex + 1 < widget.groupOrder!.length) {
+                              final nextLetter =
+                                  widget.groupOrder![currentIndex + 1];
+
                               // Load words for next letter
-                              String data = await rootBundle.loadString('assets/words.json');
+                              String data = await rootBundle
+                                  .loadString('assets/words.json');
                               List<dynamic> jsonResult = json.decode(data);
-                              List<Word> allWords = jsonResult.map((item) => Word.fromJson(item)).toList();
-                              
+                              List<Word> allWords = jsonResult
+                                  .map((item) => Word.fromJson(item))
+                                  .toList();
+
                               // Filter words for next letter in same level
                               List<Word> nextLetterWords = allWords.where((w) {
-                                return w.level == selectedLevel && 
-                                       w.english.isNotEmpty && 
-                                       w.english[0].toUpperCase() == nextLetter;
+                                return w.level == selectedLevel &&
+                                    w.english.isNotEmpty &&
+                                    w.english[0].toUpperCase() == nextLetter;
                               }).toList();
-                              
+
                               if (nextLetterWords.isNotEmpty) {
                                 // Navigate to next letter's WordQuizPage
                                 Navigator.pushReplacement(
@@ -2595,7 +2902,8 @@ class _WordQuizPageState extends State<WordQuizPage> {
                           setState(() => _isPressed = true);
                         }
 
-                        _longPressTimer = Timer(const Duration(milliseconds: 500), () async {
+                        _longPressTimer =
+                            Timer(const Duration(milliseconds: 500), () async {
                           if (!mounted) return;
 
                           // Trigger haptic feedback
@@ -2848,7 +3156,7 @@ class _WordListPageState extends State<WordListPage> {
     await _tts.setPitch(settings.speechPitch);
     await _tts.setVolume(settings.speechVolume);
     await _tts.awaitSpeakCompletion(true);
-    
+
     if (settings.ttsVoice != null) {
       await _tts.setVoice(settings.ttsVoice!);
     }
@@ -2909,7 +3217,8 @@ class _WordListPageState extends State<WordListPage> {
                   child: ListTile(
                     title: Text(
                       word.english,
-                      style: TextStyle(color: isKnown ? Colors.green : Colors.red),
+                      style:
+                          TextStyle(color: isKnown ? Colors.green : Colors.red),
                     ),
                     subtitle: Text(word.chinese),
                     trailing: IconButton(
@@ -3028,9 +3337,11 @@ class _ReinforceScreenState extends State<ReinforceScreen> {
 
     String data = await rootBundle.loadString('assets/words.json');
     List<dynamic> jsonResult = json.decode(data);
-    List<Word> allWords = jsonResult.map((item) => Word.fromJson(item)).toList();
+    List<Word> allWords =
+        jsonResult.map((item) => Word.fromJson(item)).toList();
     setState(() {
-      favoriteWords = allWords.where((w) => mergedFavs.contains(w.english)).toList();
+      favoriteWords =
+          allWords.where((w) => mergedFavs.contains(w.english)).toList();
       isLoading = false;
     });
   }
@@ -3045,10 +3356,11 @@ class _ReinforceScreenState extends State<ReinforceScreen> {
             icon: const Icon(Icons.schedule),
             onPressed: () async {
               // Build a due list across all levels from SRS
-              final levels = ['1','2','3','4','5','6'];
+              final levels = ['1', '2', '3', '4', '5', '6'];
               String data = await rootBundle.loadString('assets/words.json');
               List<dynamic> jsonResult = json.decode(data);
-              final allWords = jsonResult.map((item) => Word.fromJson(item)).toList();
+              final allWords =
+                  jsonResult.map((item) => Word.fromJson(item)).toList();
               final today = DateTime.now();
               final List<Word> due = [];
               for (final lv in levels) {
@@ -3056,10 +3368,16 @@ class _ReinforceScreenState extends State<ReinforceScreen> {
                 if (srs.isEmpty) continue;
                 srs.forEach((eng, meta) {
                   try {
-                    if (LearningStatsService.isDue(Map<String,dynamic>.from(meta), today)) {
+                    if (LearningStatsService.isDue(
+                        Map<String, dynamic>.from(meta), today)) {
                       final w = allWords.firstWhere(
                         (w) => w.level == lv && w.english == eng,
-                        orElse: () => Word(level: lv, english: eng, pos: '', engPos: '', chinese: ''),
+                        orElse: () => Word(
+                            level: lv,
+                            english: eng,
+                            pos: '',
+                            engPos: '',
+                            chinese: ''),
                       );
                       due.add(w);
                     }
@@ -3123,39 +3441,58 @@ class _ReinforceScreenState extends State<ReinforceScreen> {
                                     final choice = await _pickQuizMode(context);
                                     if (choice == null) return;
                                     final type = choice['type'] as String;
-                                    final immediate = choice['immediate'] as bool? ?? false;
+                                    final immediate =
+                                        choice['immediate'] as bool? ?? false;
                                     if (!mounted) return;
-                                    
+
                                     // 獲取所有等級的補強單字
-                                    final levels = ['1', '2', '3', '4', '5', '6'];
+                                    final levels = [
+                                      '1',
+                                      '2',
+                                      '3',
+                                      '4',
+                                      '5',
+                                      '6'
+                                    ];
                                     List<Word> allReinforceWords = [];
-                                    
+
                                     for (final level in levels) {
-                                      final targets = await _loadReinforcementList(level);
+                                      final targets =
+                                          await _loadReinforcementList(level);
                                       if (targets.isNotEmpty) {
-                                        String data = await rootBundle.loadString('assets/words.json');
-                                        final List<dynamic> jsonResult = json.decode(data);
-                                        final levelWords = jsonResult.map((e) => Word.fromJson(e)).where((w) => w.level == level && targets.contains(w.english)).toList();
+                                        String data = await rootBundle
+                                            .loadString('assets/words.json');
+                                        final List<dynamic> jsonResult =
+                                            json.decode(data);
+                                        final levelWords = jsonResult
+                                            .map((e) => Word.fromJson(e))
+                                            .where((w) =>
+                                                w.level == level &&
+                                                targets.contains(w.english))
+                                            .toList();
                                         allReinforceWords.addAll(levelWords);
                                       }
                                     }
-                                    
+
                                     if (allReinforceWords.isEmpty) {
                                       if (mounted) {
-                                        ScaffoldMessenger.of(context).showSnackBar(
-                                          const SnackBar(content: Text('目前沒有需要補強的單字')),
+                                        ScaffoldMessenger.of(context)
+                                            .showSnackBar(
+                                          const SnackBar(
+                                              content: Text('目前沒有需要補強的單字')),
                                         );
                                       }
                                       return;
                                     }
-                                    
+
                                     Navigator.push(
                                       context,
                                       MaterialPageRoute(
                                         builder: (_) => QuizPage(
                                           type: type,
                                           level: null,
-                                          questionCount: allReinforceWords.length,
+                                          questionCount:
+                                              allReinforceWords.length,
                                           quizSubset: allReinforceWords,
                                           letter: null,
                                           showImmediateAnswer: immediate,
@@ -3174,7 +3511,8 @@ class _ReinforceScreenState extends State<ReinforceScreen> {
                                     Navigator.push(
                                       context,
                                       MaterialPageRoute(
-                                        builder: (_) => const ReinforceListPage(),
+                                        builder: (_) =>
+                                            const ReinforceListPage(),
                                       ),
                                     );
                                   },
@@ -3189,7 +3527,7 @@ class _ReinforceScreenState extends State<ReinforceScreen> {
                     ),
                   ),
                   const SizedBox(height: 16),
-                  
+
                   // 收藏功能區域
                   Card(
                     child: Padding(
@@ -3214,27 +3552,33 @@ class _ReinforceScreenState extends State<ReinforceScreen> {
                             children: [
                               Expanded(
                                 child: ElevatedButton.icon(
-                                  onPressed: favoriteWords.isEmpty ? null : () async {
-                                    final choice = await _pickQuizMode(context);
-                                    if (choice == null) return;
-                                    final type = choice['type'] as String;
-                                    final immediate = choice['immediate'] as bool? ?? false;
-                                    if (!mounted) return;
-                                    
-                                    Navigator.push(
-                                      context,
-                                      MaterialPageRoute(
-                                        builder: (_) => QuizPage(
-                                          type: type,
-                                          level: null,
-                                          questionCount: favoriteWords.length,
-                                          quizSubset: favoriteWords,
-                                          letter: null,
-                                          showImmediateAnswer: immediate,
-                                        ),
-                                      ),
-                                    );
-                                  },
+                                  onPressed: favoriteWords.isEmpty
+                                      ? null
+                                      : () async {
+                                          final choice =
+                                              await _pickQuizMode(context);
+                                          if (choice == null) return;
+                                          final type = choice['type'] as String;
+                                          final immediate =
+                                              choice['immediate'] as bool? ??
+                                                  false;
+                                          if (!mounted) return;
+
+                                          Navigator.push(
+                                            context,
+                                            MaterialPageRoute(
+                                              builder: (_) => QuizPage(
+                                                type: type,
+                                                level: null,
+                                                questionCount:
+                                                    favoriteWords.length,
+                                                quizSubset: favoriteWords,
+                                                letter: null,
+                                                showImmediateAnswer: immediate,
+                                              ),
+                                            ),
+                                          );
+                                        },
                                   icon: const Icon(Icons.quiz),
                                   label: const Text('收藏測驗'),
                                 ),
@@ -3246,7 +3590,8 @@ class _ReinforceScreenState extends State<ReinforceScreen> {
                                     Navigator.push(
                                       context,
                                       MaterialPageRoute(
-                                        builder: (_) => FavoritePage(favoriteWords: favoriteWords),
+                                        builder: (_) => FavoritePage(
+                                            favoriteWords: favoriteWords),
                                       ),
                                     ).then((_) => loadFavoriteWords());
                                   },
@@ -3261,7 +3606,7 @@ class _ReinforceScreenState extends State<ReinforceScreen> {
                     ),
                   ),
                   const SizedBox(height: 16),
-                  
+
                   // 單字卡學習區域
                   Card(
                     child: Padding(
@@ -3290,7 +3635,8 @@ class _ReinforceScreenState extends State<ReinforceScreen> {
                                     Navigator.push(
                                       context,
                                       MaterialPageRoute(
-                                        builder: (_) => const AllWordsQuizPage(),
+                                        builder: (_) =>
+                                            const AllWordsQuizPage(),
                                       ),
                                     );
                                   },
@@ -3301,18 +3647,20 @@ class _ReinforceScreenState extends State<ReinforceScreen> {
                               const SizedBox(width: 8),
                               Expanded(
                                 child: OutlinedButton.icon(
-                                  onPressed: favoriteWords.isEmpty ? null : () {
-                                    Navigator.push(
-                                      context,
-                                      MaterialPageRoute(
-                                        builder: (_) => WordQuizPage(
-                                          subsetWords: favoriteWords,
-                                          subsetLetter: '收藏',
-                                          randomMode: false,
-                                        ),
-                                      ),
-                                    );
-                                  },
+                                  onPressed: favoriteWords.isEmpty
+                                      ? null
+                                      : () {
+                                          Navigator.push(
+                                            context,
+                                            MaterialPageRoute(
+                                              builder: (_) => WordQuizPage(
+                                                subsetWords: favoriteWords,
+                                                subsetLetter: '收藏',
+                                                randomMode: false,
+                                              ),
+                                            ),
+                                          );
+                                        },
                                   icon: const Icon(Icons.star),
                                   label: const Text('收藏單字'),
                                 ),
@@ -3353,20 +3701,23 @@ class _ReinforceListPageState extends State<ReinforceListPage> {
     final levels = ['1', '2', '3', '4', '5', '6'];
     Map<String, List<String>> temp = {};
     Map<String, List<Word>> tempWords = {};
-    
+
     String data = await rootBundle.loadString('assets/words.json');
     List<dynamic> jsonResult = json.decode(data);
-    List<Word> allWords = jsonResult.map((item) => Word.fromJson(item)).toList();
-    
+    List<Word> allWords =
+        jsonResult.map((item) => Word.fromJson(item)).toList();
+
     for (final level in levels) {
       final targets = await _loadReinforcementList(level);
       temp[level] = targets;
-      
+
       if (targets.isNotEmpty) {
-        tempWords[level] = allWords.where((w) => w.level == level && targets.contains(w.english)).toList();
+        tempWords[level] = allWords
+            .where((w) => w.level == level && targets.contains(w.english))
+            .toList();
       }
     }
-    
+
     setState(() {
       reinforceWords = temp;
       reinforceWordsByLevel = tempWords;
@@ -3394,9 +3745,9 @@ class _ReinforceListPageState extends State<ReinforceListPage> {
                 final level = reinforceWords.keys.elementAt(index);
                 final words = reinforceWords[level]!;
                 final wordObjects = reinforceWordsByLevel[level] ?? [];
-                
+
                 if (words.isEmpty) return const SizedBox.shrink();
-                
+
                 return Card(
                   margin: const EdgeInsets.all(8),
                   child: Column(
@@ -3414,59 +3765,70 @@ class _ReinforceListPageState extends State<ReinforceListPage> {
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             IconButton(
-                              icon: const Icon(Icons.play_arrow, color: Colors.blue),
-                              onPressed: wordObjects.isEmpty ? null : () {
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (_) => WordQuizPage(
-                                      subsetWords: wordObjects,
-                                      subsetLetter: level,
-                                      randomMode: false,
-                                    ),
-                                  ),
-                                );
-                              },
+                              icon: const Icon(Icons.play_arrow,
+                                  color: Colors.blue),
+                              onPressed: wordObjects.isEmpty
+                                  ? null
+                                  : () {
+                                      Navigator.push(
+                                        context,
+                                        MaterialPageRoute(
+                                          builder: (_) => WordQuizPage(
+                                            subsetWords: wordObjects,
+                                            subsetLetter: level,
+                                            randomMode: false,
+                                          ),
+                                        ),
+                                      );
+                                    },
                               tooltip: '順序學習',
                             ),
                             IconButton(
-                              icon: const Icon(Icons.shuffle, color: Colors.green),
-                              onPressed: wordObjects.isEmpty ? null : () {
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (_) => WordQuizPage(
-                                      subsetWords: wordObjects,
-                                      subsetLetter: level,
-                                      randomMode: true,
-                                    ),
-                                  ),
-                                );
-                              },
+                              icon: const Icon(Icons.shuffle,
+                                  color: Colors.green),
+                              onPressed: wordObjects.isEmpty
+                                  ? null
+                                  : () {
+                                      Navigator.push(
+                                        context,
+                                        MaterialPageRoute(
+                                          builder: (_) => WordQuizPage(
+                                            subsetWords: wordObjects,
+                                            subsetLetter: level,
+                                            randomMode: true,
+                                          ),
+                                        ),
+                                      );
+                                    },
                               tooltip: '隨機學習',
                             ),
                             IconButton(
-                              icon: const Icon(Icons.quiz, color: Colors.purple),
-                              onPressed: wordObjects.isEmpty ? null : () async {
-                                final choice = await _pickQuizMode(context);
-                                if (choice == null) return;
-                                final type = choice['type'] as String;
-                                final immediate = choice['immediate'] as bool? ?? false;
-                                if (!mounted) return;
-                                
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (_) => QuizPage(
-                                      type: type,
-                                      level: level,
-                                      quizSubset: wordObjects,
-                                      letter: level,
-                                      showImmediateAnswer: immediate,
-                                    ),
-                                  ),
-                                );
-                              },
+                              icon:
+                                  const Icon(Icons.quiz, color: Colors.purple),
+                              onPressed: wordObjects.isEmpty
+                                  ? null
+                                  : () async {
+                                      final choice =
+                                          await _pickQuizMode(context);
+                                      if (choice == null) return;
+                                      final type = choice['type'] as String;
+                                      final immediate =
+                                          choice['immediate'] as bool? ?? false;
+                                      if (!mounted) return;
+
+                                      Navigator.push(
+                                        context,
+                                        MaterialPageRoute(
+                                          builder: (_) => QuizPage(
+                                            type: type,
+                                            level: level,
+                                            quizSubset: wordObjects,
+                                            letter: level,
+                                            showImmediateAnswer: immediate,
+                                          ),
+                                        ),
+                                      );
+                                    },
                               tooltip: '測驗',
                             ),
                           ],
@@ -3474,29 +3836,33 @@ class _ReinforceListPageState extends State<ReinforceListPage> {
                       ),
                       ExpansionTile(
                         title: const Text('查看單字列表'),
-                        children: wordObjects.map((word) => ListTile(
-                          title: Text(
-                            word.english,
-                            style: const TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                          subtitle: Text(
-                            '${word.pos}  ${word.chinese}',
-                            style: const TextStyle(fontSize: 14),
-                          ),
-                          trailing: IconButton(
-                            icon: const Icon(Icons.play_circle_fill, color: Colors.blue, size: 20),
-                            onPressed: () {
-                              final tts = FlutterTts();
-                              tts.setLanguage('en-US');
-                              tts.awaitSpeakCompletion(true);
-                              tts.speak(word.english.replaceAll('/', ' '));
-                            },
-                            tooltip: '發音',
-                          ),
-                        )).toList(),
+                        children: wordObjects
+                            .map((word) => ListTile(
+                                  title: Text(
+                                    word.english,
+                                    style: const TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                  subtitle: Text(
+                                    '${word.pos}  ${word.chinese}',
+                                    style: const TextStyle(fontSize: 14),
+                                  ),
+                                  trailing: IconButton(
+                                    icon: const Icon(Icons.play_circle_fill,
+                                        color: Colors.blue, size: 20),
+                                    onPressed: () {
+                                      final tts = FlutterTts();
+                                      tts.setLanguage('en-US');
+                                      tts.awaitSpeakCompletion(true);
+                                      tts.speak(
+                                          word.english.replaceAll('/', ' '));
+                                    },
+                                    tooltip: '發音',
+                                  ),
+                                ))
+                            .toList(),
                       ),
                     ],
                   ),
@@ -3538,14 +3904,14 @@ class _AllWordsQuizPageState extends State<AllWordsQuizPage> {
               spacing: 8,
               children: [
                 ...levels.map((level) => FilterChip(
-                  label: Text('等級 $level'),
-                  selected: selectedLevel == level,
-                  onSelected: (selected) {
-                    setState(() {
-                      selectedLevel = selected ? level : null;
-                    });
-                  },
-                )),
+                      label: Text('等級 $level'),
+                      selected: selectedLevel == level,
+                      onSelected: (selected) {
+                        setState(() {
+                          selectedLevel = selected ? level : null;
+                        });
+                      },
+                    )),
                 FilterChip(
                   label: const Text('全部'),
                   selected: selectedLevel == 'all',
@@ -3572,37 +3938,45 @@ class _AllWordsQuizPageState extends State<AllWordsQuizPage> {
             SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
-                onPressed: selectedLevel != null ? () async {
-                  String data = await rootBundle.loadString('assets/words.json');
-                  List<dynamic> jsonResult = json.decode(data);
-                  List<Word> allWords = jsonResult.map((item) => Word.fromJson(item)).toList();
-                  
-                  List<Word> filteredWords;
-                  if (selectedLevel == 'all') {
-                    filteredWords = allWords;
-                  } else {
-                    filteredWords = allWords.where((w) => w.level == selectedLevel).toList();
-                  }
-                  
-                  if (filteredWords.isEmpty) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('沒有找到單字')),
-                    );
-                    return;
-                  }
-                  
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => WordQuizPage(
-                        initialLevel: selectedLevel,
-                        subsetWords: filteredWords,
-                        subsetLetter: selectedLevel == 'all' ? '全部' : selectedLevel,
-                        randomMode: randomMode,
-                      ),
-                    ),
-                  );
-                } : null,
+                onPressed: selectedLevel != null
+                    ? () async {
+                        String data =
+                            await rootBundle.loadString('assets/words.json');
+                        List<dynamic> jsonResult = json.decode(data);
+                        List<Word> allWords = jsonResult
+                            .map((item) => Word.fromJson(item))
+                            .toList();
+
+                        List<Word> filteredWords;
+                        if (selectedLevel == 'all') {
+                          filteredWords = allWords;
+                        } else {
+                          filteredWords = allWords
+                              .where((w) => w.level == selectedLevel)
+                              .toList();
+                        }
+
+                        if (filteredWords.isEmpty) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('沒有找到單字')),
+                          );
+                          return;
+                        }
+
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => WordQuizPage(
+                              initialLevel: selectedLevel,
+                              subsetWords: filteredWords,
+                              subsetLetter:
+                                  selectedLevel == 'all' ? '全部' : selectedLevel,
+                              randomMode: randomMode,
+                            ),
+                          ),
+                        );
+                      }
+                    : null,
                 icon: const Icon(Icons.play_arrow),
                 label: const Text('開始學習'),
               ),
@@ -3639,7 +4013,8 @@ class _FavoritePageState extends State<FavoritePage> {
     }
     // Sort words within each level alphabetically
     for (final level in favWordsByLevel.keys) {
-      favWordsByLevel[level]!.sort((a, b) => a.english.toLowerCase().compareTo(b.english.toLowerCase()));
+      favWordsByLevel[level]!.sort(
+          (a, b) => a.english.toLowerCase().compareTo(b.english.toLowerCase()));
     }
   }
 
@@ -3675,7 +4050,7 @@ class _FavoritePageState extends State<FavoritePage> {
               itemBuilder: (context, index) {
                 final level = favWordsByLevel.keys.elementAt(index);
                 final words = favWordsByLevel[level]!;
-                
+
                 return Card(
                   margin: const EdgeInsets.all(8),
                   child: Column(
@@ -3693,7 +4068,8 @@ class _FavoritePageState extends State<FavoritePage> {
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             IconButton(
-                              icon: const Icon(Icons.play_arrow, color: Colors.blue),
+                              icon: const Icon(Icons.play_arrow,
+                                  color: Colors.blue),
                               onPressed: () {
                                 Navigator.push(
                                   context,
@@ -3709,7 +4085,8 @@ class _FavoritePageState extends State<FavoritePage> {
                               tooltip: '順序學習',
                             ),
                             IconButton(
-                              icon: const Icon(Icons.shuffle, color: Colors.green),
+                              icon: const Icon(Icons.shuffle,
+                                  color: Colors.green),
                               onPressed: () {
                                 Navigator.push(
                                   context,
@@ -3725,14 +4102,16 @@ class _FavoritePageState extends State<FavoritePage> {
                               tooltip: '隨機學習',
                             ),
                             IconButton(
-                              icon: const Icon(Icons.quiz, color: Colors.purple),
+                              icon:
+                                  const Icon(Icons.quiz, color: Colors.purple),
                               onPressed: () async {
                                 final choice = await _pickQuizMode(context);
                                 if (choice == null) return;
                                 final type = choice['type'] as String;
-                                final immediate = choice['immediate'] as bool? ?? false;
+                                final immediate =
+                                    choice['immediate'] as bool? ?? false;
                                 if (!mounted) return;
-                                
+
                                 Navigator.push(
                                   context,
                                   MaterialPageRoute(
@@ -3753,23 +4132,27 @@ class _FavoritePageState extends State<FavoritePage> {
                       ),
                       ExpansionTile(
                         title: const Text('查看單字列表'),
-                        children: words.map((word) => ListTile(
-                          title: Text(
-                            word.english,
-                            style: const TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                          subtitle: Text(
-                            '${word.pos}  ${word.chinese}',
-                            style: const TextStyle(fontSize: 14),
-                          ),
-                          trailing: IconButton(
-                            icon: const Icon(Icons.delete, color: Colors.red, size: 20),
-                            onPressed: () => removeFavorite(word.english),
-                          ),
-                        )).toList(),
+                        children: words
+                            .map((word) => ListTile(
+                                  title: Text(
+                                    word.english,
+                                    style: const TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                  subtitle: Text(
+                                    '${word.pos}  ${word.chinese}',
+                                    style: const TextStyle(fontSize: 14),
+                                  ),
+                                  trailing: IconButton(
+                                    icon: const Icon(Icons.delete,
+                                        color: Colors.red, size: 20),
+                                    onPressed: () =>
+                                        removeFavorite(word.english),
+                                  ),
+                                ))
+                            .toList(),
                       ),
                     ],
                   ),
@@ -3856,8 +4239,11 @@ class _QuizPageState extends State<QuizPage> {
       filteredWords = allWords.where((word) {
         bool levelMatch = widget.level == null || word.level == widget.level;
         bool letterMatch = widget.letter == null ||
-            (word.english.isNotEmpty && widget.letter!.isNotEmpty &&
-            word.english.toLowerCase().startsWith(widget.letter!.toLowerCase()));
+            (word.english.isNotEmpty &&
+                widget.letter!.isNotEmpty &&
+                word.english
+                    .toLowerCase()
+                    .startsWith(widget.letter!.toLowerCase()));
         return levelMatch && letterMatch;
       }).toList();
     }
@@ -3874,24 +4260,23 @@ class _QuizPageState extends State<QuizPage> {
     // 4. Generate options for each question
     optionsList = quizWords.map((answer) {
       List<Word> options = [answer];
-      
+
       // Get the first letter of the correct answer
       String firstLetter = answer.english.split('/').first.trim().toLowerCase();
       if (firstLetter.isNotEmpty) {
         firstLetter = firstLetter[0];
       }
-      
+
       // Find distractors that start with the same letter
-      List<Word> distractors = allWords
-          .where((w) {
-            String wordFirstLetter = w.english.split('/').first.trim().toLowerCase();
-            return w.english != answer.english &&
-                   wordFirstLetter.isNotEmpty &&
-                   wordFirstLetter[0] == firstLetter &&
-                   (widget.level == null || w.level == widget.level);
-          })
-          .toList();
-      
+      List<Word> distractors = allWords.where((w) {
+        String wordFirstLetter =
+            w.english.split('/').first.trim().toLowerCase();
+        return w.english != answer.english &&
+            wordFirstLetter.isNotEmpty &&
+            wordFirstLetter[0] == firstLetter &&
+            (widget.level == null || w.level == widget.level);
+      }).toList();
+
       // If not enough distractors with same first letter, add others
       if (distractors.length < 3) {
         List<Word> otherDistractors = allWords
@@ -3902,7 +4287,7 @@ class _QuizPageState extends State<QuizPage> {
             .toList();
         distractors.addAll(otherDistractors);
       }
-      
+
       distractors.shuffle();
       options.addAll(distractors.take(3));
       options.shuffle();
@@ -4012,7 +4397,7 @@ class _QuizPageState extends State<QuizPage> {
           }
         }
       }
-      
+
       // Record quiz result for statistics
       LearningStatsService.updateQuizResult(
         level: widget.level ?? '1',
@@ -4024,10 +4409,12 @@ class _QuizPageState extends State<QuizPage> {
       // Reinforcement: count wrong answers for this session
       try {
         for (int i = 0; i < quizWords.length; i++) {
-          final correctIdx = optionsList[i].indexWhere((w) => w.english == quizWords[i].english);
+          final correctIdx = optionsList[i]
+              .indexWhere((w) => w.english == quizWords[i].english);
           final user = userAnswers[i];
           if (user >= 0 && user != correctIdx) {
-            await _incrementReinforceCounter(widget.level ?? '1', quizWords[i].english, 'wrong');
+            await _incrementReinforceCounter(
+                widget.level ?? '1', quizWords[i].english, 'wrong');
           }
         }
       } catch (_) {}
@@ -4045,7 +4432,10 @@ class _QuizPageState extends State<QuizPage> {
           'startedAt': started.toIso8601String(),
           'endedAt': ended.toIso8601String(),
           'durationSeconds': ended.difference(started).inSeconds,
-          'usedFavorites': (widget.quizSubset != null && widget.quizSubset!.isNotEmpty) ? null : null,
+          'usedFavorites':
+              (widget.quizSubset != null && widget.quizSubset!.isNotEmpty)
+                  ? null
+                  : null,
           'timestamp': DateTime.now().toIso8601String(),
         };
         await FirestoreSync.uploadQuizRecord(record);
@@ -4072,7 +4462,8 @@ class _QuizPageState extends State<QuizPage> {
       favs.add(english);
       await prefs.setStringList('favorite_words', favs);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('已加入收藏')));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('已加入收藏')));
       }
     }
   }
@@ -4122,7 +4513,9 @@ class _QuizPageState extends State<QuizPage> {
                 children: [
                   if (widget.type == 'ch2en' || widget.type == 'en2ch')
                     Text(
-                      widget.type == 'ch2en' ? word.chinese : word.english.split('/').first.trim(),
+                      widget.type == 'ch2en'
+                          ? word.chinese
+                          : word.english.split('/').first.trim(),
                       style: const TextStyle(
                         fontSize: 24,
                         fontWeight: FontWeight.bold,
@@ -4142,16 +4535,17 @@ class _QuizPageState extends State<QuizPage> {
                         ),
                         const SizedBox(height: 16),
                         Builder(builder: (_) {
-                        final eng = word.english.split('/').first.trim();
-                        if (eng.length >= 2) {
-                          final masked = eng.length <= 4
-                              ? '${eng[0]}${"_" * (eng.length - 2)}${eng[eng.length - 1]}'
-                              : eng.length >= 6 
-                                  ? '${eng.substring(0, 2)}${"_" * (eng.length - 4)}${eng.substring(eng.length - 2)}'
-                                  : '${eng[0]}${"_" * (eng.length - 2)}${eng[eng.length - 1]}';
-                          return Text('提示: $masked', style: const TextStyle(color: Colors.grey));
-                        }
-                        return const SizedBox.shrink();
+                          final eng = word.english.split('/').first.trim();
+                          if (eng.length >= 2) {
+                            final masked = eng.length <= 4
+                                ? '${eng[0]}${"_" * (eng.length - 2)}${eng[eng.length - 1]}'
+                                : eng.length >= 6
+                                    ? '${eng.substring(0, 2)}${"_" * (eng.length - 4)}${eng.substring(eng.length - 2)}'
+                                    : '${eng[0]}${"_" * (eng.length - 2)}${eng[eng.length - 1]}';
+                            return Text('提示: $masked',
+                                style: const TextStyle(color: Colors.grey));
+                          }
+                          return const SizedBox.shrink();
                         }),
                         const SizedBox(height: 8),
                         TextField(
@@ -4165,7 +4559,8 @@ class _QuizPageState extends State<QuizPage> {
                           onChanged: (val) {
                             if (widget.showImmediateAnswer) {
                               // 當輸入長度達到正確答案長度時立即判斷
-                              final correct = word.english.split('/').first.trim();
+                              final correct =
+                                  word.english.split('/').first.trim();
                               if (val.trim().length >= correct.length) {
                                 _handleSpellingFillinSubmit(word);
                               }
@@ -4178,7 +4573,8 @@ class _QuizPageState extends State<QuizPage> {
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
                             ElevatedButton(
-                              onPressed: () => _handleSpellingFillinSubmit(word),
+                              onPressed: () =>
+                                  _handleSpellingFillinSubmit(word),
                               child: const Text('送出'),
                             ),
                             const SizedBox(width: 12),
@@ -4192,115 +4588,127 @@ class _QuizPageState extends State<QuizPage> {
                       ],
                     ),
                   const SizedBox(height: 32),
-                  if (widget.type == 'ch2en' || widget.type == 'en2ch' || widget.type == 'listening')
-                  Expanded(
-                    child: GridView.count(
-                      crossAxisCount: 2,
-                      mainAxisSpacing: 12,
-                      crossAxisSpacing: 12,
-                      childAspectRatio: 1.0,
-                      physics: const NeverScrollableScrollPhysics(),
-                      padding: EdgeInsets.zero,
-                      children: List.generate(4, (i) {
-                        final opt = options[i];
-                        final isCorrect = i == correctIdx;
-                        final isSelected = _selectedIndex == i;
-                        final showAnswer =
-                            _showAnswer && (isCorrect || isSelected);
+                  if (widget.type == 'ch2en' ||
+                      widget.type == 'en2ch' ||
+                      widget.type == 'listening')
+                    Expanded(
+                      child: GridView.count(
+                        crossAxisCount: 2,
+                        mainAxisSpacing: 12,
+                        crossAxisSpacing: 12,
+                        childAspectRatio: 1.0,
+                        physics: const NeverScrollableScrollPhysics(),
+                        padding: EdgeInsets.zero,
+                        children: List.generate(4, (i) {
+                          final opt = options[i];
+                          final isCorrect = i == correctIdx;
+                          final isSelected = _selectedIndex == i;
+                          final showAnswer =
+                              _showAnswer && (isCorrect || isSelected);
 
-                        Color? cardColor = Theme.of(context).cardColor;
-                        Color? borderColor = Colors.grey[300];
-                        BoxShadow? boxShadow;
+                          Color? cardColor = Theme.of(context).cardColor;
+                          Color? borderColor = Colors.grey[300];
+                          BoxShadow? boxShadow;
 
-                        if (showAnswer) {
-                          if (isCorrect) {
-                            cardColor = Colors.green[50];
-                            borderColor = Colors.green;
+                          if (showAnswer) {
+                            if (isCorrect) {
+                              cardColor = Colors.green[50];
+                              borderColor = Colors.green;
+                            } else if (isSelected) {
+                              cardColor = Colors.red[50];
+                              borderColor = Colors.red;
+                            }
                           } else if (isSelected) {
-                            cardColor = Colors.red[50];
-                            borderColor = Colors.red;
+                            boxShadow = BoxShadow(
+                              color: Theme.of(context)
+                                  .primaryColor
+                                  .withOpacity(0.3),
+                              blurRadius: 8,
+                              spreadRadius: 1,
+                            );
                           }
-                        } else if (isSelected) {
-                          boxShadow = BoxShadow(
-                            color: Theme.of(context).primaryColor.withOpacity(0.3),
-                            blurRadius: 8,
-                            spreadRadius: 1,
-                          );
-                        }
 
-                        return GestureDetector(
-                          onTap: _showAnswer ? null : () => _handleAnswer(i),
-                          child: AnimatedContainer(
-                            duration: const Duration(milliseconds: 200),
-                            decoration: BoxDecoration(
-                              color: cardColor,
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(
-                                color: borderColor!,
-                                width: 1.5,
+                          return GestureDetector(
+                            onTap: _showAnswer ? null : () => _handleAnswer(i),
+                            child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 200),
+                              decoration: BoxDecoration(
+                                color: cardColor,
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(
+                                  color: borderColor!,
+                                  width: 1.5,
+                                ),
+                                boxShadow:
+                                    boxShadow != null ? [boxShadow] : null,
                               ),
-                              boxShadow: boxShadow != null ? [boxShadow] : null,
-                            ),
-                            child: Center(
-                              child: Padding(
-                                padding: const EdgeInsets.all(8.0),
-                                child: Column(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    Text(
-                                      widget.type == 'ch2en'
-                                          ? opt.english.split('/').first.trim()
-                                          : opt.chinese,
-                                      style: TextStyle(
-                                        fontSize: 18,
-                                        color: isSelected &&
-                                                !isCorrect &&
-                                                _showAnswer
-                                            ? Colors.red
-                                            : (isCorrect && _showAnswer
-                                                ? Colors.green
-                                                : null),
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                      textAlign: TextAlign.center,
-                                    ),
-                                    if (_showAllTranslations ||
-                                        _showAnswer ||
-                                        userAnswers[current] != -1)
-                                      Padding(
-                                        padding: const EdgeInsets.only(
-                                          top: 4.0,
+                              child: Center(
+                                child: Padding(
+                                  padding: const EdgeInsets.all(8.0),
+                                  child: Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Text(
+                                        widget.type == 'ch2en'
+                                            ? opt.english
+                                                .split('/')
+                                                .first
+                                                .trim()
+                                            : opt.chinese,
+                                        style: TextStyle(
+                                          fontSize: 18,
+                                          color: isSelected &&
+                                                  !isCorrect &&
+                                                  _showAnswer
+                                              ? Colors.red
+                                              : (isCorrect && _showAnswer
+                                                  ? Colors.green
+                                                  : null),
+                                          fontWeight: FontWeight.bold,
                                         ),
-                                        child: Text(
-                                          widget.type == 'ch2en'
-                                              ? opt.chinese
-                                              : opt.english.split('/').first.trim(),
-                                          style: TextStyle(
-                                            fontSize: 14,
-                                            color: isCorrect && _showAnswer
-                                                ? Colors.green[700]
-                                                : (isSelected &&
-                                                        !isCorrect &&
-                                                        _showAnswer
-                                                    ? Colors.red[700]
-                                                    : Colors.grey[600]),
-                                            fontStyle: FontStyle.italic,
-                                            fontWeight: isCorrect && _showAnswer
-                                                ? FontWeight.bold
-                                                : null,
+                                        textAlign: TextAlign.center,
+                                      ),
+                                      if (_showAllTranslations ||
+                                          _showAnswer ||
+                                          userAnswers[current] != -1)
+                                        Padding(
+                                          padding: const EdgeInsets.only(
+                                            top: 4.0,
                                           ),
-                                          textAlign: TextAlign.center,
+                                          child: Text(
+                                            widget.type == 'ch2en'
+                                                ? opt.chinese
+                                                : opt.english
+                                                    .split('/')
+                                                    .first
+                                                    .trim(),
+                                            style: TextStyle(
+                                              fontSize: 14,
+                                              color: isCorrect && _showAnswer
+                                                  ? Colors.green[700]
+                                                  : (isSelected &&
+                                                          !isCorrect &&
+                                                          _showAnswer
+                                                      ? Colors.red[700]
+                                                      : Colors.grey[600]),
+                                              fontStyle: FontStyle.italic,
+                                              fontWeight:
+                                                  isCorrect && _showAnswer
+                                                      ? FontWeight.bold
+                                                      : null,
+                                            ),
+                                            textAlign: TextAlign.center,
+                                          ),
                                         ),
-                                      ),
-                                  ],
+                                    ],
+                                  ),
                                 ),
                               ),
                             ),
-                          ),
-                        );
-                      }),
+                          );
+                        }),
+                      ),
                     ),
-                  ),
                   Padding(
                     padding: const EdgeInsets.only(top: 8.0, bottom: 16.0),
                     child: Row(
@@ -4546,7 +4954,7 @@ class _AllWordsPageState extends State<AllWordsPage> {
     await flutterTts.setPitch(settings.speechPitch);
     await flutterTts.setVolume(settings.speechVolume);
     await flutterTts.awaitSpeakCompletion(true);
-    
+
     // Configure audio session to not pause background music
     await flutterTts.setIosAudioCategory(
       IosTextToSpeechAudioCategory.playback,
@@ -4557,7 +4965,7 @@ class _AllWordsPageState extends State<AllWordsPage> {
       ],
       IosTextToSpeechAudioMode.spokenAudio,
     );
-    
+
     if (settings.ttsVoice != null) {
       await flutterTts.setVoice(settings.ttsVoice!);
     }
@@ -4634,7 +5042,7 @@ class _AllWordsPageState extends State<AllWordsPage> {
     // First, filter the words based on the search query
     if (query.isNotEmpty) {
       tempWords = tempWords
-          .where((word) => 
+          .where((word) =>
               word.english.toLowerCase().contains(query) ||
               word.chinese.contains(query))
           .toList();

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../models/learning_stats.dart';
 import '../services/learning_stats_service.dart';
+import '../utils/time_format.dart';
 
 class LearningStatsScreen extends StatefulWidget {
   const LearningStatsScreen({super.key});
@@ -35,11 +36,11 @@ class _LearningStatsScreenState extends State<LearningStatsScreen>
 
   Future<void> _loadStats() async {
     setState(() => _isLoading = true);
-    
+
     try {
       final stats = await LearningStatsService.getLearningStats();
       final trends = await LearningStatsService.getLearningTrends();
-      
+
       setState(() {
         _stats = stats;
         _trends = trends;
@@ -141,7 +142,7 @@ class _LearningStatsScreenState extends State<LearningStatsScreen>
         ),
         _buildStatCard(
           '今日學習時間',
-          '${_todayStudyMinutes()} 分鐘',
+          formatSecondsToHms(_todayStudySeconds()),
           Icons.timer,
           Colors.indigo,
         ),
@@ -153,7 +154,7 @@ class _LearningStatsScreenState extends State<LearningStatsScreen>
         ),
         _buildStatCard(
           '總學習時間',
-          '${_stats!.totalStudyTime} 分鐘',
+          formatSecondsToHms(_stats!.totalStudyTime * 60),
           Icons.access_time,
           Colors.green,
         ),
@@ -178,14 +179,17 @@ class _LearningStatsScreenState extends State<LearningStatsScreen>
     return _stats!.dailyWordsLearned[key] ?? 0;
   }
 
-  int _todayStudyMinutes() {
+  int _todayStudySeconds() {
     final key = _dateKey(DateTime.now());
-    return _stats!.dailyStudyTime[key] ?? 0;
+    final minutes = _stats!.dailyStudyTime[key] ?? 0;
+    return minutes * 60;
   }
 
-  String _dateKey(DateTime d) => '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+  String _dateKey(DateTime d) =>
+      '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
 
-  Widget _buildStatCard(String title, String value, IconData icon, Color color) {
+  Widget _buildStatCard(
+      String title, String value, IconData icon, Color color) {
     return Card(
       elevation: 4,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -197,7 +201,8 @@ class _LearningStatsScreenState extends State<LearningStatsScreen>
           children: [
             Icon(icon, size: 28, color: color), // 稍微減小圖標尺寸
             const SizedBox(height: 6), // 減少間距
-            Flexible( // 使用 Flexible 防止溢出
+            Flexible(
+              // 使用 Flexible 防止溢出
               child: Text(
                 value,
                 style: const TextStyle(
@@ -210,7 +215,8 @@ class _LearningStatsScreenState extends State<LearningStatsScreen>
               ),
             ),
             const SizedBox(height: 4), // 減少間距
-            Flexible( // 使用 Flexible 防止溢出
+            Flexible(
+              // 使用 Flexible 防止溢出
               child: Text(
                 title,
                 style: TextStyle(
@@ -305,9 +311,9 @@ class _LearningStatsScreenState extends State<LearningStatsScreen>
               ],
             ),
             const SizedBox(height: 16),
-            ..._stats!.levelStats.values.map((levelStats) => 
-              _buildLevelProgressItem(levelStats)
-            ).toList(),
+            ..._stats!.levelStats.values
+                .map((levelStats) => _buildLevelProgressItem(levelStats))
+                .toList(),
           ],
         ),
       ),
@@ -422,7 +428,7 @@ class _LearningStatsScreenState extends State<LearningStatsScreen>
 
   Widget _buildDailyStudyChart() {
     final dailyData = _trends!['dailyStudyTime'] as Map<String, int>;
-    
+
     return Card(
       elevation: 4,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -448,7 +454,7 @@ class _LearningStatsScreenState extends State<LearningStatsScreen>
 
   Widget _buildWeeklyProgressChart() {
     final weeklyData = _trends!['weeklyProgress'] as Map<String, int>;
-    
+
     return Card(
       elevation: 4,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -474,8 +480,9 @@ class _LearningStatsScreenState extends State<LearningStatsScreen>
 
   Widget _buildBarChart(Map<String, int> data) {
     final values = data.values.toList();
-    final maxValue = values.isNotEmpty ? values.reduce((a, b) => a > b ? a : b) : 1;
-    
+    final maxValue =
+        values.isNotEmpty ? values.reduce((a, b) => a > b ? a : b) : 1;
+
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
       crossAxisAlignment: CrossAxisAlignment.end,
@@ -509,7 +516,7 @@ class _LearningStatsScreenState extends State<LearningStatsScreen>
 
   Widget _buildLevelComparisonChart() {
     final levelData = _trends!['levelProgress'] as Map<String, LevelStats>;
-    
+
     return Card(
       elevation: 4,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -523,9 +530,9 @@ class _LearningStatsScreenState extends State<LearningStatsScreen>
               style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 16),
-            ...levelData.values.map((levelStats) => 
-              _buildLevelProgressItem(levelStats)
-            ).toList(),
+            ...levelData.values
+                .map((levelStats) => _buildLevelProgressItem(levelStats))
+                .toList(),
           ],
         ),
       ),
@@ -547,9 +554,10 @@ class _LearningStatsScreenState extends State<LearningStatsScreen>
   }
 
   Widget _buildAchievementSummary() {
-    final unlockedCount = _stats!.achievements.where((a) => a.isUnlocked).length;
+    final unlockedCount =
+        _stats!.achievements.where((a) => a.isUnlocked).length;
     final totalCount = _stats!.achievements.length;
-    
+
     return Card(
       elevation: 4,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -613,9 +621,9 @@ class _LearningStatsScreenState extends State<LearningStatsScreen>
     }
 
     return Column(
-      children: _stats!.achievements.map((achievement) => 
-        _buildAchievementItem(achievement)
-      ).toList(),
+      children: _stats!.achievements
+          .map((achievement) => _buildAchievementItem(achievement))
+          .toList(),
     );
   }
 
@@ -634,7 +642,8 @@ class _LearningStatsScreenState extends State<LearningStatsScreen>
         title: Text(
           achievement.title,
           style: TextStyle(
-            fontWeight: achievement.isUnlocked ? FontWeight.bold : FontWeight.normal,
+            fontWeight:
+                achievement.isUnlocked ? FontWeight.bold : FontWeight.normal,
             color: achievement.isUnlocked ? Colors.black : Colors.grey,
           ),
         ),
@@ -683,7 +692,8 @@ class _LearningStatsScreenState extends State<LearningStatsScreen>
             final level = item['level'] ?? '-';
             final score = item['score'] ?? 0;
             final total = item['questionCount'] ?? 0;
-            final startedAt = DateTime.tryParse(item['startedAt'] ?? '') ?? DateTime.now();
+            final startedAt =
+                DateTime.tryParse(item['startedAt'] ?? '') ?? DateTime.now();
             final duration = (item['durationSeconds'] ?? 0) as int;
             return ListTile(
               leading: const Icon(Icons.quiz),
@@ -705,7 +715,8 @@ class _LearningStatsScreenState extends State<LearningStatsScreen>
       final data = await LearningStatsService.downloadFullUserData();
       final list = (data?['quizRecords'] as List<dynamic>? ?? [])
           .cast<Map<String, dynamic>>();
-      list.sort((a, b) => (b['timestamp'] ?? '').compareTo(a['timestamp'] ?? ''));
+      list.sort(
+          (a, b) => (b['timestamp'] ?? '').compareTo(a['timestamp'] ?? ''));
       return list.take(50).toList();
     } catch (_) {
       return [];

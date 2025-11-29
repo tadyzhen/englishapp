@@ -9,6 +9,9 @@ class FriendSummary {
   final int currentStreak;
   final int totalStudyTime;
   final String? bio;
+  final String? currentLevel;
+  final int todayStudySeconds;
+  final bool isOnline;
 
   FriendSummary({
     required this.uid,
@@ -18,6 +21,9 @@ class FriendSummary {
     this.currentStreak = 0,
     this.totalStudyTime = 0,
     this.bio,
+    this.currentLevel,
+    this.todayStudySeconds = 0,
+    this.isOnline = false,
   });
 }
 
@@ -95,6 +101,54 @@ class FriendsService {
         final data = doc.data();
         final stats = data['learningStats'] as Map<String, dynamic>?;
         final totalWords = _extractTotalWordsLearned(data);
+
+        String? level;
+        if (stats != null) {
+          final levelStats = stats['levelStats'];
+          if (levelStats is Map<String, dynamic> && levelStats.isNotEmpty) {
+            List<Map<String, dynamic>> list =
+                levelStats.values.whereType<Map<String, dynamic>>().toList();
+            list.sort((a, b) {
+              final at = DateTime.tryParse(a['lastStudied'] ?? '') ??
+                  DateTime.fromMillisecondsSinceEpoch(0);
+              final bt = DateTime.tryParse(b['lastStudied'] ?? '') ??
+                  DateTime.fromMillisecondsSinceEpoch(0);
+              return bt.compareTo(at);
+            });
+            if (list.isNotEmpty) {
+              level = list.first['level']?.toString();
+            }
+          }
+        }
+
+        bool isOnline = (data['isOnline'] as bool?) ?? false;
+
+        // 今日學習秒數：以 todayStudySeconds 為基底，若在線且有 startAt，
+        // 則用現在時間推算目前秒數（不增加 Firestore 寫入）
+        int todayStudySeconds = 0;
+        if (stats != null) {
+          final ts = stats['todayStudySeconds'];
+          if (ts is int) todayStudySeconds = ts;
+
+          if (isOnline) {
+            final startAt = stats['todayStudyStartAt'];
+            DateTime? start;
+            if (startAt is Timestamp) {
+              start = startAt.toDate();
+            } else if (startAt is String) {
+              try {
+                start = DateTime.parse(startAt);
+              } catch (_) {}
+            }
+            if (start != null) {
+              final now = DateTime.now();
+              final delta = now.difference(start).inSeconds;
+              if (delta > 0) {
+                todayStudySeconds += delta;
+              }
+            }
+          }
+        }
         result.add(FriendSummary(
           uid: doc.id,
           displayName:
@@ -106,6 +160,9 @@ class FriendsService {
           currentStreak: (stats?['currentStreak'] as int?) ?? 0,
           totalStudyTime: (stats?['totalStudyTime'] as int?) ?? 0,
           bio: data['bio'] as String?,
+          currentLevel: level,
+          todayStudySeconds: todayStudySeconds,
+          isOnline: isOnline,
         ));
       }
     }
