@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import '../main.dart';
 import 'account_screen.dart';
 import 'learning_stats_screen.dart';
-import 'friends_screen.dart';
+import 'community_screen.dart';
 
 class MainNavigation extends StatefulWidget {
   const MainNavigation({super.key});
@@ -19,8 +19,8 @@ class _MainNavigationState extends State<MainNavigation> {
     const LearningStatsScreen(), // 學習統計
     const QuizOptionsPage(), // 測驗設定頁
     const ReinforceScreen(), // 加強頁面
-    const FriendsScreen(), // 好友
-    const AccountScreen(),     // 帳號頁面
+    const CommunityScreen(), // 社群（好友 + 群組）
+    const AccountScreen(), // 帳號頁面
   ];
 
   void _onItemTapped(int index) {
@@ -67,7 +67,7 @@ class _MainNavigationState extends State<MainNavigation> {
           BottomNavigationBarItem(
             icon: Icon(Icons.group_outlined),
             activeIcon: Icon(Icons.group),
-            label: '好友',
+            label: '社群',
           ),
           BottomNavigationBarItem(
             icon: Icon(Icons.person_outline),
@@ -82,7 +82,7 @@ class _MainNavigationState extends State<MainNavigation> {
 
 class PlaceholderWidget extends StatelessWidget {
   final String text;
-  
+
   const PlaceholderWidget(this.text, {super.key});
 
   @override
