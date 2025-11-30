@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../models/learning_stats.dart';
 import '../services/learning_stats_service.dart';
+import '../services/online_study_time_store.dart';
 import '../utils/time_format.dart';
 
 class LearningStatsScreen extends StatefulWidget {
@@ -140,12 +142,7 @@ class _LearningStatsScreenState extends State<LearningStatsScreen>
           Icons.today,
           Colors.teal,
         ),
-        _buildStatCard(
-          '今日學習時間',
-          formatSecondsToHms(_todayStudySeconds()),
-          Icons.timer,
-          Colors.indigo,
-        ),
+        _buildTodayStudyTimeCard(),
         _buildStatCard(
           '總學習單字',
           '${_stats!.totalWordsLearned}',
@@ -183,6 +180,35 @@ class _LearningStatsScreenState extends State<LearningStatsScreen>
     final key = _dateKey(DateTime.now());
     final minutes = _stats!.dailyStudyTime[key] ?? 0;
     return minutes * 60;
+  }
+
+  Widget _buildTodayStudyTimeCard() {
+    final fallbackSeconds = _todayStudySeconds();
+    final user = FirebaseAuth.instance.currentUser;
+
+    if (user == null) {
+      return _buildStatCard(
+        '今日學習時間',
+        formatSecondsToHms(fallbackSeconds),
+        Icons.timer,
+        Colors.indigo,
+      );
+    }
+
+    final store = OnlineStudyTimeStore.instance;
+
+    return ValueListenableBuilder<int>(
+      valueListenable: store.listenableFor(user.uid),
+      builder: (context, seconds, _) {
+        final displaySeconds = seconds > 0 ? seconds : fallbackSeconds;
+        return _buildStatCard(
+          '今日學習時間',
+          formatSecondsToHms(displaySeconds),
+          Icons.timer,
+          Colors.indigo,
+        );
+      },
+    );
   }
 
   String _dateKey(DateTime d) =>
@@ -321,6 +347,13 @@ class _LearningStatsScreenState extends State<LearningStatsScreen>
   }
 
   Widget _buildLevelProgressItem(LevelStats levelStats) {
+    final total = levelStats.totalWords > 0 ? levelStats.totalWords : 1;
+    final clampedLearned = levelStats.wordsLearned.clamp(0, total);
+    final rawProgress = levelStats.totalWords > 0
+        ? clampedLearned / levelStats.totalWords
+        : 0.0;
+    final clampedProgress = rawProgress.clamp(0.0, 1.0);
+
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
       child: Column(
@@ -330,18 +363,18 @@ class _LearningStatsScreenState extends State<LearningStatsScreen>
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text('等級 ${levelStats.level}'),
-              Text('${levelStats.wordsLearned}/${levelStats.totalWords}'),
+              Text('$clampedLearned/${levelStats.totalWords}'),
             ],
           ),
           const SizedBox(height: 4),
           LinearProgressIndicator(
-            value: levelStats.progress,
+            value: clampedProgress,
             backgroundColor: Colors.grey[300],
             valueColor: AlwaysStoppedAnimation<Color>(Colors.blue),
           ),
           const SizedBox(height: 4),
           Text(
-            '${(levelStats.progress * 100).toStringAsFixed(1)}%',
+            '${(clampedProgress * 100).toStringAsFixed(1)}%',
             style: TextStyle(fontSize: 12, color: Colors.grey[600]),
           ),
         ],
@@ -695,12 +728,54 @@ class _LearningStatsScreenState extends State<LearningStatsScreen>
             final startedAt =
                 DateTime.tryParse(item['startedAt'] ?? '') ?? DateTime.now();
             final duration = (item['durationSeconds'] ?? 0) as int;
-            return ListTile(
+            final wrongWords =
+                (item['wrongWords'] as List<dynamic>?)?.cast<String>() ??
+                    const <String>[];
+
+            return ExpansionTile(
               leading: const Icon(Icons.quiz),
               title: Text('${_formatQuizType(type)}  等級: ${level ?? '全部'}'),
               subtitle: Text(
                 '${_formatDateTime(startedAt)}  |  成績: $score/$total  |  ${duration}s',
               ),
+              children: [
+                if (wrongWords.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    child: Text(
+                      '此紀錄沒有錯題資料',
+                      style: TextStyle(fontSize: 12, color: Colors.grey),
+                    ),
+                  )
+                else
+                  Padding(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          '錯題單字：',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 4,
+                          children: wrongWords
+                              .map((w) => Chip(
+                                    label: Text(w),
+                                    visualDensity: VisualDensity.compact,
+                                  ))
+                              .toList(),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
             );
           },
         );
@@ -717,7 +792,8 @@ class _LearningStatsScreenState extends State<LearningStatsScreen>
           .cast<Map<String, dynamic>>();
       list.sort(
           (a, b) => (b['timestamp'] ?? '').compareTo(a['timestamp'] ?? ''));
-      return list.take(50).toList();
+      // 僅保留最近 10 筆紀錄
+      return list.take(10).toList();
     } catch (_) {
       return [];
     }

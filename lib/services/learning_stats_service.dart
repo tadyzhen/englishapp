@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -18,25 +19,27 @@ class LearningStatsService {
       // 先從本地獲取
       final prefs = await SharedPreferences.getInstance();
       final localStats = prefs.getString(_statsKey);
-      
+
       if (localStats != null) {
-        var stats = await _ensureAchievementsCatalog(LearningStats.fromJson(json.decode(localStats)));
+        var stats = await _ensureAchievementsCatalog(
+            LearningStats.fromJson(json.decode(localStats)));
         stats = await _reconcileWithCloudKnownWords(stats);
-        
+
         // 嘗試從雲端同步
         await _syncFromCloud();
-        
+
         // 重新從本地讀取（可能已被雲端數據更新）
         final updatedStats = prefs.getString(_statsKey);
         if (updatedStats != null) {
-          var refreshed = await _ensureAchievementsCatalog(LearningStats.fromJson(json.decode(updatedStats)));
+          var refreshed = await _ensureAchievementsCatalog(
+              LearningStats.fromJson(json.decode(updatedStats)));
           refreshed = await _reconcileWithCloudKnownWords(refreshed);
           return refreshed;
         }
-        
+
         return stats;
       }
-      
+
       // 如果本地沒有數據，嘗試從雲端獲取
       var cloud = await _loadFromCloud();
       cloud = await _ensureAchievementsCatalog(cloud);
@@ -53,7 +56,7 @@ class LearningStatsService {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(_statsKey, json.encode(stats.toJson()));
-      
+
       // 同步到雲端
       await _syncToCloud(stats);
 
@@ -77,7 +80,7 @@ class LearningStatsService {
     try {
       final stats = await getLearningStats();
       final now = DateTime.now();
-      
+
       // 更新總體統計
       final updatedStats = stats.copyWith(
         totalWordsLearned: stats.totalWordsLearned + wordsLearned,
@@ -87,14 +90,15 @@ class LearningStatsService {
       );
 
       // 更新等級統計
-      final levelStats = updatedStats.levelStats[level] ?? LevelStats(
-        level: level,
-        wordsLearned: 0,
-        totalWords: await _getTotalWordsForLevel(level),
-        studyTime: 0,
-        accuracy: 0.0,
-        lastStudied: now,
-      );
+      final levelStats = updatedStats.levelStats[level] ??
+          LevelStats(
+            level: level,
+            wordsLearned: 0,
+            totalWords: await _getTotalWordsForLevel(level),
+            studyTime: 0,
+            accuracy: 0.0,
+            lastStudied: now,
+          );
 
       final updatedLevelStats = levelStats.copyWith(
         wordsLearned: levelStats.wordsLearned + wordsLearned,
@@ -103,22 +107,26 @@ class LearningStatsService {
         lastStudied: now,
       );
 
-      final newLevelStats = Map<String, LevelStats>.from(updatedStats.levelStats);
+      final newLevelStats =
+          Map<String, LevelStats>.from(updatedStats.levelStats);
       newLevelStats[level] = updatedLevelStats;
 
       // 更新連續學習天數
       final streak = _calculateStreak(stats, now);
-      final longestStreak = streak > stats.longestStreak ? streak : stats.longestStreak;
+      final longestStreak =
+          streak > stats.longestStreak ? streak : stats.longestStreak;
 
       // 更新每日學習時間
       final dailyKey = _getDateKey(now);
       final dailyStudyTime = Map<String, int>.from(updatedStats.dailyStudyTime);
-      dailyStudyTime[dailyKey] = (dailyStudyTime[dailyKey] ?? 0) + studyTimeMinutes;
+      dailyStudyTime[dailyKey] =
+          (dailyStudyTime[dailyKey] ?? 0) + studyTimeMinutes;
 
       // 更新每週進度
       final weeklyKey = _getWeekKey(now);
       final weeklyProgress = Map<String, int>.from(updatedStats.weeklyProgress);
-      weeklyProgress[weeklyKey] = (weeklyProgress[weeklyKey] ?? 0) + wordsLearned;
+      weeklyProgress[weeklyKey] =
+          (weeklyProgress[weeklyKey] ?? 0) + wordsLearned;
 
       // 更新每日學到的單字數
       final dailyWords = Map<String, int>.from(updatedStats.dailyWordsLearned);
@@ -156,7 +164,7 @@ class LearningStatsService {
     try {
       final stats = await getLearningStats();
       final accuracy = totalQuestions > 0 ? score / totalQuestions : 0.0;
-      
+
       // 更新測驗統計
       final newAverageScore = _calculateAverageScore(
         stats.averageQuizScore,
@@ -176,10 +184,11 @@ class LearningStatsService {
         final updatedLevelStats = levelStats.copyWith(
           accuracy: _calculateAccuracy(levelStats, score, totalQuestions),
         );
-        
-        final newLevelStats = Map<String, LevelStats>.from(updatedStats.levelStats);
+
+        final newLevelStats =
+            Map<String, LevelStats>.from(updatedStats.levelStats);
         newLevelStats[level] = updatedLevelStats;
-        
+
         final finalStats = updatedStats.copyWith(levelStats: newLevelStats);
         await saveLearningStats(finalStats);
       } else {
@@ -210,7 +219,7 @@ class LearningStatsService {
     try {
       final stats = await getLearningStats();
       final now = DateTime.now();
-      
+
       // 過去7天的學習時間
       final last7Days = <String, int>{};
       for (int i = 6; i >= 0; i--) {
@@ -263,7 +272,7 @@ class LearningStatsService {
 
       final doc = await _db.collection('users').doc(user.uid).get();
       final data = doc.data();
-      
+
       if (data != null && data['learningStats'] != null) {
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString(_statsKey, json.encode(data['learningStats']));
@@ -294,7 +303,7 @@ class LearningStatsService {
 
       final doc = await _db.collection('users').doc(user.uid).get();
       final data = doc.data();
-      
+
       if (data != null && data['learningStats'] != null) {
         final stats = LearningStats.fromJson(data['learningStats']);
         final ensured = await _ensureAchievementsCatalog(stats);
@@ -302,7 +311,7 @@ class LearningStatsService {
         await saveLearningStats(reconciled);
         return reconciled;
       }
-      
+
       return LearningStats.empty();
     } catch (e) {
       print('Error loading from cloud: $e');
@@ -311,10 +320,12 @@ class LearningStatsService {
   }
 
   // 將雲端 knownByLevel 的已學單字數整合進本地統計，避免只計入登入後的新學單字
-  static Future<LearningStats> _reconcileWithCloudKnownWords(LearningStats stats) async {
+  static Future<LearningStats> _reconcileWithCloudKnownWords(
+      LearningStats stats) async {
     try {
       final knownByLevel = await FirestoreSync.getKnownByLevel();
-      if (knownByLevel.isEmpty) return stats;
+      // 從 assets 計算各等級總單字數（與主畫面一致）
+      final levelTotals = await _loadLevelTotalsFromAssets();
 
       // 計算各等級的雲端學習數
       final Map<String, int> cloudCounts = {};
@@ -323,31 +334,42 @@ class LearningStatsService {
         cloudCounts[level] = list.length;
       });
 
-      if (cloudCounts.isEmpty) return stats;
+      // 從本機 SharedPreferences 讀取 known_<level>，若存在則優先採用本機，
+      // 這樣在主畫面重置進度後，統計頁也會跟著同步（不會被舊的雲端數字蓋回去）。
+      final localCounts = await _loadLocalKnownCounts();
 
-      // 更新等級統計 wordsLearned 為雲端最大值，避免回退
+      if (cloudCounts.isEmpty && localCounts.isEmpty) return stats;
+
+      // 更新等級統計：
+      // - wordsLearned：優先使用本機 known_<level> 的數量，沒有本機時才用雲端 knownByLevel
+      // - totalWords：對齊 assets/words.json 的實際單字數，避免使用預設 1000
       final newLevelStats = Map<String, LevelStats>.from(stats.levelStats);
       int cloudTotal = 0;
-      for (final entry in cloudCounts.entries) {
-        final levelKey = entry.key;
-        final count = entry.value;
-        cloudTotal += count;
-        final existing = newLevelStats[levelKey] ?? LevelStats(
-          level: levelKey,
-          wordsLearned: 0,
-          totalWords: 0,
-          studyTime: 0,
-          accuracy: 0.0,
-          lastStudied: stats.lastStudyDate,
-        );
+      final allLevels = <String>{...cloudCounts.keys, ...localCounts.keys};
+      for (final levelKey in allLevels) {
+        final cloudCount = cloudCounts[levelKey] ?? 0;
+        final localCount = localCounts[levelKey];
+        final effectiveCount = localCount ?? cloudCount;
+        cloudTotal += effectiveCount;
+        final existing = newLevelStats[levelKey] ??
+            LevelStats(
+              level: levelKey,
+              wordsLearned: 0,
+              totalWords: levelTotals[levelKey] ?? 0,
+              studyTime: 0,
+              accuracy: 0.0,
+              lastStudied: stats.lastStudyDate,
+            );
         newLevelStats[levelKey] = existing.copyWith(
-          wordsLearned: count > existing.wordsLearned ? count : existing.wordsLearned,
-          totalWords: existing.totalWords == 0 ? existing.totalWords : existing.totalWords,
+          wordsLearned: effectiveCount,
+          totalWords: levelTotals[levelKey] ?? existing.totalWords,
         );
       }
 
       // 若雲端總數較大，提升 totalWordsLearned
-      final adjustedTotal = cloudTotal > stats.totalWordsLearned ? cloudTotal : stats.totalWordsLearned;
+      final adjustedTotal = cloudTotal > stats.totalWordsLearned
+          ? cloudTotal
+          : stats.totalWordsLearned;
 
       return stats.copyWith(
         totalWordsLearned: adjustedTotal,
@@ -359,9 +381,44 @@ class LearningStatsService {
   }
 
   static Future<int> _getTotalWordsForLevel(String level) async {
-    // 這裡需要從 words.json 獲取該等級的總單字數
-    // 暫時返回固定值，實際實現時需要讀取 JSON 文件
-    return 1000; // 假設每個等級有1000個單字
+    final totals = await _loadLevelTotalsFromAssets();
+    return totals[level] ?? 0;
+  }
+
+  // 從本機 SharedPreferences 讀取各等級已學單字數（known_<level>），
+  // 供統計頁與主畫面使用相同來源的進度資料。
+  static Future<Map<String, int>> _loadLocalKnownCounts() async {
+    final prefs = await SharedPreferences.getInstance();
+    final Map<String, int> result = {};
+    for (final lv in ['1', '2', '3', '4', '5', '6']) {
+      final list = prefs.getStringList('known_$lv') ?? <String>[];
+      result[lv] = list.length;
+    }
+    return result;
+  }
+
+  // 快取各等級總單字數，避免重複讀取 assets
+  static Map<String, int>? _levelTotalsCache;
+
+  static Future<Map<String, int>> _loadLevelTotalsFromAssets() async {
+    if (_levelTotalsCache != null) return _levelTotalsCache!;
+    try {
+      final data = await rootBundle.loadString('assets/words.json');
+      final List<dynamic> jsonResult = json.decode(data);
+      final Map<String, int> totals = {};
+      for (final item in jsonResult) {
+        final map = item as Map<String, dynamic>;
+        final level = map['level']?.toString();
+        if (level == null) continue;
+        totals[level] = (totals[level] ?? 0) + 1;
+      }
+      _levelTotalsCache = totals;
+      return totals;
+    } catch (_) {
+      // 發生錯誤時回傳空 map，避免整體失敗
+      _levelTotalsCache = {};
+      return _levelTotalsCache!;
+    }
   }
 
   // ===== Spaced Repetition (SRS) lightweight helpers =====
@@ -379,7 +436,8 @@ class LearningStatsService {
     }
   }
 
-  static Future<void> saveSrsDataForLevel(String level, Map<String, dynamic> data) async {
+  static Future<void> saveSrsDataForLevel(
+      String level, Map<String, dynamic> data) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('$_srsPrefix$level', json.encode(data));
   }
@@ -419,9 +477,11 @@ class LearningStatsService {
 
   static bool isDue(Map<String, dynamic> data, DateTime today) {
     try {
-      final last = DateTime.parse((data['lastReviewedAt'] ?? today.toIso8601String()) as String);
+      final last = DateTime.parse(
+          (data['lastReviewedAt'] ?? today.toIso8601String()) as String);
       final interval = (data['interval'] ?? 0) as int;
-      final dueDate = DateTime(last.year, last.month, last.day).add(Duration(days: interval));
+      final dueDate = DateTime(last.year, last.month, last.day)
+          .add(Duration(days: interval));
       final dToday = DateTime(today.year, today.month, today.day);
       return !dueDate.isAfter(dToday);
     } catch (_) {
@@ -438,18 +498,21 @@ class LearningStatsService {
     }
   }
 
-  static double _calculateAccuracy(LevelStats levelStats, int correct, int total) {
+  static double _calculateAccuracy(
+      LevelStats levelStats, int correct, int total) {
     if (total == 0) return levelStats.accuracy;
-    
+
     final totalAnswers = levelStats.wordsLearned + total;
-    final totalCorrect = (levelStats.accuracy * levelStats.wordsLearned) + correct;
-    
+    final totalCorrect =
+        (levelStats.accuracy * levelStats.wordsLearned) + correct;
+
     return totalAnswers > 0 ? totalCorrect / totalAnswers : 0.0;
   }
 
-  static double _calculateAverageScore(double currentAverage, int currentCount, double newScore) {
+  static double _calculateAverageScore(
+      double currentAverage, int currentCount, double newScore) {
     if (currentCount == 0) return newScore;
-    
+
     final totalScore = (currentAverage * currentCount) + newScore;
     return totalScore / (currentCount + 1);
   }
@@ -489,11 +552,13 @@ class LearningStatsService {
     return (daysSinceFirstDay / 7).ceil();
   }
 
-  static Future<LearningStats> _ensureAchievementsCatalog(LearningStats stats) async {
+  static Future<LearningStats> _ensureAchievementsCatalog(
+      LearningStats stats) async {
     return await _buildAchievementsWithProgress(stats);
   }
 
-  static Future<LearningStats> _buildAchievementsWithProgress(LearningStats stats) async {
+  static Future<LearningStats> _buildAchievementsWithProgress(
+      LearningStats stats) async {
     final catalog = _achievementCatalog();
     final existing = {for (final a in stats.achievements) a.id: a};
     final computed = <Achievement>[];
@@ -506,9 +571,11 @@ class LearningStatsService {
       final target = def['target'] as int;
       final type = def['type'] as String; // 'words' or 'streak'
 
-      final progress = type == 'words' ? stats.totalWordsLearned : stats.currentStreak;
+      final progress =
+          type == 'words' ? stats.totalWordsLearned : stats.currentStreak;
       final isUnlocked = progress >= target;
-      final unlockedAt = isUnlocked ? (existing[id]?.unlockedAt ?? DateTime.now()) : null;
+      final unlockedAt =
+          isUnlocked ? (existing[id]?.unlockedAt ?? DateTime.now()) : null;
 
       computed.add(Achievement(
         id: id,

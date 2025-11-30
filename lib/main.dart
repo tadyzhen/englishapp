@@ -15,6 +15,7 @@ import 'screens/modern_login_screen.dart';
 import 'screens/main_navigation.dart';
 import 'services/learning_stats_service.dart';
 import 'services/notifications_service.dart';
+import 'services/online_study_time_store.dart';
 import 'utils/time_format.dart';
 
 Future<Map<String, dynamic>?> _pickQuizMode(BuildContext context) async {
@@ -472,6 +473,12 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
       return;
     }
     await _ensureTodayLoaded();
+    // 將目前本機累積秒數同步到全域 OnlineStudyTimeStore，作為這次 session 的起點
+    OnlineStudyTimeStore.instance.updateFromServer(
+      uid: user.uid,
+      baseSeconds: _todayStudySeconds,
+      isOnline: true,
+    );
     // 標記線上狀態，但不在這裡寫入 todayStudySeconds，以減少寫入次數
     try {
       await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
@@ -496,6 +503,16 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
       // 只更新本機，避免頻繁打 Firestore
       final prefs = await SharedPreferences.getInstance();
       await prefs.setInt('study_today_seconds', _todayStudySeconds);
+
+      final user = FirebaseAuth.instance.currentUser;
+      if (user != null) {
+        // 讓本機主畫面與社群顯示使用完全相同的秒數來源
+        OnlineStudyTimeStore.instance.updateFromServer(
+          uid: user.uid,
+          baseSeconds: _todayStudySeconds,
+          isOnline: true,
+        );
+      }
     });
   }
 
@@ -520,6 +537,13 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
         'onlineUpdatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
     } catch (_) {}
+
+    // 更新本機的 OnlineStudyTimeStore，標記為離線並定格在最終秒數
+    OnlineStudyTimeStore.instance.updateFromServer(
+      uid: user.uid,
+      baseSeconds: _todayStudySeconds,
+      isOnline: false,
+    );
   }
 
   @override
@@ -1122,64 +1146,63 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
   }
 }
 
-class _TodayStudyTimeBanner extends StatefulWidget {
+class _TodayStudyTimeBanner extends StatelessWidget {
   final int initialSeconds;
 
   const _TodayStudyTimeBanner({required this.initialSeconds});
 
   @override
-  State<_TodayStudyTimeBanner> createState() => _TodayStudyTimeBannerState();
-}
-
-class _TodayStudyTimeBannerState extends State<_TodayStudyTimeBanner> {
-  late int _seconds;
-  Timer? _timer;
-
-  @override
-  void initState() {
-    super.initState();
-    _seconds = widget.initialSeconds;
-    _startTimer();
-  }
-
-  void _startTimer() {
-    _timer?.cancel();
-    _timer = Timer.periodic(const Duration(seconds: 1), (timer) async {
-      final prefs = await SharedPreferences.getInstance();
-      final current = prefs.getInt('study_today_seconds') ?? 0;
-      if (!mounted) return;
-      setState(() {
-        _seconds = current;
-      });
-    });
-  }
-
-  @override
-  void dispose() {
-    _timer?.cancel();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.primary.withOpacity(0.08),
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Icon(Icons.timer, size: 18),
-          const SizedBox(width: 8),
-          Text(
-            '今日學習時間：${formatSecondsToHms(_seconds)}',
-            style: theme.textTheme.bodyMedium,
+    final user = FirebaseAuth.instance.currentUser;
+
+    if (user == null) {
+      // 未登入時就直接用傳入的初始秒數顯示
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.primary.withOpacity(0.08),
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.timer, size: 18),
+            const SizedBox(width: 8),
+            Text(
+              '今日學習時間：${formatSecondsToHms(initialSeconds)}',
+              style: theme.textTheme.bodyMedium,
+            ),
+          ],
+        ),
+      );
+    }
+
+    final store = OnlineStudyTimeStore.instance;
+
+    return ValueListenableBuilder<int>(
+      valueListenable: store.listenableFor(user.uid),
+      builder: (context, seconds, _) {
+        final displaySeconds = seconds > 0 ? seconds : initialSeconds;
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: theme.colorScheme.primary.withOpacity(0.08),
+            borderRadius: BorderRadius.circular(16),
           ),
-        ],
-      ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.timer, size: 18),
+              const SizedBox(width: 8),
+              Text(
+                '今日學習時間：${formatSecondsToHms(displaySeconds)}',
+                style: theme.textTheme.bodyMedium,
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 }
@@ -4423,6 +4446,17 @@ class _QuizPageState extends State<QuizPage> {
       try {
         final started = _startTime ?? DateTime.now();
         final ended = DateTime.now();
+        // 收集本次測驗答錯的單字（以英文為主鍵）
+        final List<String> wrongWords = [];
+        for (int i = 0; i < quizWords.length && i < userAnswers.length; i++) {
+          final word = quizWords[i];
+          final userAnswer = userAnswers[i];
+          // 這裡只針對選擇題型比對英文是否答對，其他型態可再擴充
+          final isCorrect = userAnswer == word.english;
+          if (!isCorrect) {
+            wrongWords.add(word.english);
+          }
+        }
         final record = {
           'type': widget.type,
           'level': widget.level,
@@ -4436,6 +4470,7 @@ class _QuizPageState extends State<QuizPage> {
               (widget.quizSubset != null && widget.quizSubset!.isNotEmpty)
                   ? null
                   : null,
+          'wrongWords': wrongWords,
           'timestamp': DateTime.now().toIso8601String(),
         };
         await FirestoreSync.uploadQuizRecord(record);
