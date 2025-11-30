@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'online_study_time_store.dart';
 
 class FriendSummary {
   final String uid;
@@ -149,6 +150,13 @@ class FriendsService {
             }
           }
         }
+
+        // 更新共用的線上學習時間 store，讓 UI 之間共享同一份秒數狀態
+        OnlineStudyTimeStore.instance.updateFromServer(
+          uid: doc.id,
+          baseSeconds: todayStudySeconds,
+          isOnline: isOnline,
+        );
         result.add(FriendSummary(
           uid: doc.id,
           displayName:

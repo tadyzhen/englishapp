@@ -1,6 +1,6 @@
-import 'dart:async';
 import 'package:flutter/material.dart';
 import '../services/friends_service.dart';
+import '../services/online_study_time_store.dart';
 import '../utils/time_format.dart';
 
 class FriendsScreen extends StatefulWidget {
@@ -103,72 +103,38 @@ class _FriendsScreenState extends State<FriendsScreen> {
   }
 }
 
-class _FriendStudyTimeRow extends StatefulWidget {
+class _FriendStudyTimeRow extends StatelessWidget {
   final FriendSummary friend;
 
   const _FriendStudyTimeRow({required this.friend});
 
   @override
-  State<_FriendStudyTimeRow> createState() => _FriendStudyTimeRowState();
-}
-
-class _FriendStudyTimeRowState extends State<_FriendStudyTimeRow> {
-  late int _seconds;
-  Timer? _timer;
-
-  @override
-  void initState() {
-    super.initState();
-    _seconds = widget.friend.todayStudySeconds;
-    _setupTimer();
-  }
-
-  @override
-  void didUpdateWidget(covariant _FriendStudyTimeRow oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.friend.isOnline != widget.friend.isOnline ||
-        oldWidget.friend.todayStudySeconds != widget.friend.todayStudySeconds) {
-      _seconds = widget.friend.todayStudySeconds;
-      _setupTimer();
-    }
-  }
-
-  void _setupTimer() {
-    _timer?.cancel();
-    if (widget.friend.isOnline) {
-      _timer = Timer.periodic(const Duration(seconds: 1), (_) {
-        if (!mounted) return;
-        setState(() {
-          _seconds++;
-        });
-      });
-    }
-  }
-
-  @override
-  void dispose() {
-    _timer?.cancel();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
-    final f = widget.friend;
-    return Row(
-      children: [
-        Text(
-          f.currentLevel != null ? '等級 ${f.currentLevel}' : '等級 -',
-          style: const TextStyle(fontSize: 12),
-        ),
-        const SizedBox(width: 12),
-        Text(
-          formatSecondsToHms(_seconds),
-          style: TextStyle(
-            fontSize: 12,
-            color: f.isOnline ? Colors.green : Colors.grey,
-          ),
-        ),
-      ],
+    final store = OnlineStudyTimeStore.instance;
+    return ValueListenableBuilder<int>(
+      valueListenable: store.listenableFor(friend.uid),
+      builder: (context, seconds, _) {
+        final displaySeconds = seconds > 0 ? seconds : friend.todayStudySeconds;
+        final isOnline = store.isOnline(friend.uid) || friend.isOnline;
+        return Row(
+          children: [
+            Text(
+              friend.currentLevel != null
+                  ? '等級 ${friend.currentLevel}'
+                  : '等級 -',
+              style: const TextStyle(fontSize: 12),
+            ),
+            const SizedBox(width: 12),
+            Text(
+              formatSecondsToHms(displaySeconds),
+              style: TextStyle(
+                fontSize: 12,
+                color: isOnline ? Colors.green : Colors.grey,
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 }

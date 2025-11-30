@@ -1,8 +1,8 @@
-import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import '../services/groups_service.dart';
+import '../services/online_study_time_store.dart';
 import '../utils/time_format.dart';
 
 class GroupDetailScreen extends StatefulWidget {
@@ -275,6 +275,13 @@ class _GroupDetailScreenState extends State<GroupDetailScreen>
                 final currentLevel = _extractCurrentLevel(data);
                 final todaySeconds = (stats?['todayStudySeconds'] as int?) ?? 0;
                 final isOnline = (data['isOnline'] as bool?) ?? false;
+
+                // 同步更新共用的線上學習時間 store，讓群組成員也共用同一份秒數狀態
+                OnlineStudyTimeStore.instance.updateFromServer(
+                  uid: uid,
+                  baseSeconds: todaySeconds,
+                  isOnline: isOnline,
+                );
                 return ListTile(
                   leading: CircleAvatar(
                     child: Text(displayName.isNotEmpty
@@ -288,6 +295,7 @@ class _GroupDetailScreenState extends State<GroupDetailScreen>
                       Text('已學單字：$totalWordsLearned，連續天數：$currentStreak'),
                       const SizedBox(height: 2),
                       _MemberStudyTimeRow(
+                        uid: uid,
                         currentLevel: currentLevel,
                         initialSeconds: todaySeconds,
                         isOnline: isOnline,
@@ -522,77 +530,44 @@ class _GroupDetailScreenState extends State<GroupDetailScreen>
   }
 }
 
-class _MemberStudyTimeRow extends StatefulWidget {
+class _MemberStudyTimeRow extends StatelessWidget {
+  final String uid;
   final String? currentLevel;
   final int initialSeconds;
   final bool isOnline;
 
   const _MemberStudyTimeRow({
+    required this.uid,
     required this.currentLevel,
     required this.initialSeconds,
     required this.isOnline,
   });
 
   @override
-  State<_MemberStudyTimeRow> createState() => _MemberStudyTimeRowState();
-}
-
-class _MemberStudyTimeRowState extends State<_MemberStudyTimeRow> {
-  late int _seconds;
-  Timer? _timer;
-
-  @override
-  void initState() {
-    super.initState();
-    _seconds = widget.initialSeconds;
-    _setupTimer();
-  }
-
-  @override
-  void didUpdateWidget(covariant _MemberStudyTimeRow oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.isOnline != widget.isOnline ||
-        oldWidget.initialSeconds != widget.initialSeconds) {
-      _seconds = widget.initialSeconds;
-      _setupTimer();
-    }
-  }
-
-  void _setupTimer() {
-    _timer?.cancel();
-    if (widget.isOnline) {
-      _timer = Timer.periodic(const Duration(seconds: 1), (_) {
-        if (!mounted) return;
-        setState(() {
-          _seconds++;
-        });
-      });
-    }
-  }
-
-  @override
-  void dispose() {
-    _timer?.cancel();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Text(
-          widget.currentLevel != null ? '等級 ${widget.currentLevel}' : '等級 -',
-          style: const TextStyle(fontSize: 12),
-        ),
-        const SizedBox(width: 12),
-        Text(
-          formatSecondsToHms(_seconds),
-          style: TextStyle(
-            fontSize: 12,
-            color: widget.isOnline ? Colors.green : Colors.grey,
-          ),
-        ),
-      ],
+    final store = OnlineStudyTimeStore.instance;
+    return ValueListenableBuilder<int>(
+      valueListenable: store.listenableFor(uid),
+      builder: (context, seconds, _) {
+        final displaySeconds = seconds > 0 ? seconds : initialSeconds;
+        final online = store.isOnline(uid) || isOnline;
+        return Row(
+          children: [
+            Text(
+              currentLevel != null ? '等級 $currentLevel' : '等級 -',
+              style: const TextStyle(fontSize: 12),
+            ),
+            const SizedBox(width: 12),
+            Text(
+              formatSecondsToHms(displaySeconds),
+              style: TextStyle(
+                fontSize: 12,
+                color: online ? Colors.green : Colors.grey,
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 }
