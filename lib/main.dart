@@ -4505,6 +4505,9 @@ class _QuizPageState extends State<QuizPage> {
 
   @override
   Widget build(BuildContext context) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isWideScreen = screenWidth >= 800;
+
     if (quizWords.isEmpty || optionsList.isEmpty) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
@@ -4631,7 +4634,7 @@ class _QuizPageState extends State<QuizPage> {
                         crossAxisCount: 2,
                         mainAxisSpacing: 12,
                         crossAxisSpacing: 12,
-                        childAspectRatio: 1.0,
+                        childAspectRatio: isWideScreen ? 2.4 : 1.0,
                         physics: const NeverScrollableScrollPhysics(),
                         padding: EdgeInsets.zero,
                         children: List.generate(4, (i) {
@@ -4691,7 +4694,7 @@ class _QuizPageState extends State<QuizPage> {
                                                 .trim()
                                             : opt.chinese,
                                         style: TextStyle(
-                                          fontSize: 18,
+                                          fontSize: isWideScreen ? 16 : 18,
                                           color: isSelected &&
                                                   !isCorrect &&
                                                   _showAnswer
@@ -4718,7 +4721,7 @@ class _QuizPageState extends State<QuizPage> {
                                                     .first
                                                     .trim(),
                                             style: TextStyle(
-                                              fontSize: 14,
+                                              fontSize: isWideScreen ? 12 : 14,
                                               color: isCorrect && _showAnswer
                                                   ? Colors.green[700]
                                                   : (isSelected &&
