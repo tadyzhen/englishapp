@@ -10,6 +10,7 @@ import '../firestore_sync.dart';
 
 class LearningStatsService {
   static const String _statsKey = 'learning_stats';
+  static const String _quizHistoryKey = 'quiz_history';
   static final FirebaseFirestore _db = FirebaseFirestore.instance;
   static final ValueNotifier<int> statsVersion = ValueNotifier<int>(0);
 
@@ -261,6 +262,38 @@ class LearningStatsService {
       return await FirestoreSync.downloadUserData();
     } catch (e) {
       return null;
+    }
+  }
+
+  static Future<void> saveQuizRecordLocally(
+      Map<String, dynamic> quizRecord) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final list = prefs.getStringList(_quizHistoryKey) ?? <String>[];
+      list.add(json.encode(quizRecord));
+      while (list.length > 50) {
+        list.removeAt(0);
+      }
+      await prefs.setStringList(_quizHistoryKey, list);
+    } catch (_) {}
+  }
+
+  static Future<List<Map<String, dynamic>>> loadLocalQuizHistory() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final list = prefs.getStringList(_quizHistoryKey) ?? <String>[];
+      return list
+          .map((s) {
+            try {
+              return Map<String, dynamic>.from(json.decode(s));
+            } catch (_) {
+              return <String, dynamic>{};
+            }
+          })
+          .where((m) => m.isNotEmpty)
+          .toList();
+    } catch (_) {
+      return <Map<String, dynamic>>[];
     }
   }
 
@@ -608,6 +641,54 @@ class LearningStatsService {
         'description': '學習了500個單字',
         'icon': '🏆',
         'target': 500,
+        'type': 'words',
+      },
+      {
+        'id': 'words_1000',
+        'title': '單字高手',
+        'description': '學習了1000個單字',
+        'icon': '🔥',
+        'target': 1000,
+        'type': 'words',
+      },
+      {
+        'id': 'words_2000',
+        'title': '單字大師',
+        'description': '學習了2000個單字',
+        'icon': '💪',
+        'target': 2000,
+        'type': 'words',
+      },
+      {
+        'id': 'words_3000',
+        'title': '單字宗師',
+        'description': '學習了3000個單字',
+        'icon': '🔮',
+        'target': 3000,
+        'type': 'words',
+      },
+      {
+        'id': 'words_4000',
+        'title': '單字達人',
+        'description': '學習了4000個單字',
+        'icon': '👑',
+        'target': 4000,
+        'type': 'words',
+      },
+      {
+        'id': 'words_5000',
+        'title': '單字大神',
+        'description': '學習了5000個單字',
+        'icon': '🔥',
+        'target': 5000,
+        'type': 'words',
+      },
+      {
+        'id': 'words_6000',
+        'title': 'HSAT',
+        'description': '學習了6000個單字',
+        'icon': '🎓',
+        'target': 6000,
         'type': 'words',
       },
       {

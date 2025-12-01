@@ -785,15 +785,24 @@ class _LearningStatsScreenState extends State<LearningStatsScreen>
 
   Future<List<Map<String, dynamic>>> _loadQuizHistory() async {
     try {
-      // FirestoreSync already exposes fetching in downloadUserData; implement a lightweight query here later
-      // For now, pull the latest from downloadUserData
       final data = await LearningStatsService.downloadFullUserData();
-      final list = (data?['quizRecords'] as List<dynamic>? ?? [])
+      final cloud = (data?['quizRecords'] as List<dynamic>? ?? [])
           .cast<Map<String, dynamic>>();
-      list.sort(
-          (a, b) => (b['timestamp'] ?? '').compareTo(a['timestamp'] ?? ''));
-      // 僅保留最近 10 筆紀錄
-      return list.take(10).toList();
+      final local = await LearningStatsService.loadLocalQuizHistory();
+
+      final all = <Map<String, dynamic>>[...cloud, ...local].where((m) {
+        final wrong = m['wrongWords'];
+        if (wrong is List) {
+          return wrong.isNotEmpty;
+        }
+        return false;
+      }).toList();
+      all.sort((a, b) {
+        final ta = (a['timestamp'] ?? '') as String;
+        final tb = (b['timestamp'] ?? '') as String;
+        return tb.compareTo(ta);
+      });
+      return all.take(10).toList();
     } catch (_) {
       return [];
     }

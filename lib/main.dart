@@ -4214,6 +4214,7 @@ class _QuizPageState extends State<QuizPage> {
   DateTime? _startTime;
   List<int> userAnswers = [];
   List<List<Word>> optionsList = [];
+  final Set<String> _wrongWordsThisQuiz = <String>{};
   bool _isProcessing = false;
   bool _showAnswer = false;
   bool _isAnswerCorrect = false;
@@ -4241,12 +4242,15 @@ class _QuizPageState extends State<QuizPage> {
         _showAllTranslations = false;
         _isProcessing = false;
       });
+      _wrongWordsThisQuiz.clear();
       await loadQuiz();
     }
   }
 
   Future<void> loadQuiz() async {
     if (!mounted) return;
+
+    _wrongWordsThisQuiz.clear();
 
     // 1. Load all words from JSON
     String data = await rootBundle.loadString('assets/words.json');
@@ -4337,6 +4341,8 @@ class _QuizPageState extends State<QuizPage> {
       if (userAnswers[current] == -1) {
         if (_isAnswerCorrect) {
           score++;
+        } else {
+          _wrongWordsThisQuiz.add(quizWords[current].english);
         }
         userAnswers[current] = selectedIndex;
       }
@@ -4358,6 +4364,9 @@ class _QuizPageState extends State<QuizPage> {
       _showAnswer = true;
       _isAnswerCorrect = isCorrect;
       if (isCorrect) score++;
+      if (!isCorrect) {
+        _wrongWordsThisQuiz.add(word.english);
+      }
     });
 
     if (isCorrect) {
@@ -4431,31 +4440,30 @@ class _QuizPageState extends State<QuizPage> {
 
       // Reinforcement: count wrong answers for this session
       try {
-        for (int i = 0; i < quizWords.length; i++) {
-          final correctIdx = optionsList[i]
-              .indexWhere((w) => w.english == quizWords[i].english);
-          final user = userAnswers[i];
-          if (user >= 0 && user != correctIdx) {
-            await _incrementReinforceCounter(
-                widget.level ?? '1', quizWords[i].english, 'wrong');
-          }
+        for (final w in _wrongWordsThisQuiz) {
+          await _incrementReinforceCounter(widget.level ?? '1', w, 'wrong');
         }
       } catch (_) {}
 
-      // Save quiz history to Firestore
+      // Save quiz history locally and to Firestore
       try {
         final started = _startTime ?? DateTime.now();
         final ended = DateTime.now();
-        // 收集本次測驗答錯的單字（以英文為主鍵）
-        final List<String> wrongWords = [];
-        for (int i = 0; i < quizWords.length && i < userAnswers.length; i++) {
-          final word = quizWords[i];
-          final userAnswer = userAnswers[i];
-          // 這裡只針對選擇題型比對英文是否答對，其他型態可再擴充
-          final isCorrect = userAnswer == word.english;
-          if (!isCorrect) {
-            wrongWords.add(word.english);
-          }
+        final List<String> wrongWords = _wrongWordsThisQuiz.toList();
+        if (wrongWords.isEmpty) {
+          // 沒有錯題就不存歷史紀錄
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (_) => QuizResultsPage(
+                quizWords: quizWords,
+                optionsList: optionsList,
+                userAnswers: userAnswers,
+                quizType: widget.type,
+              ),
+            ),
+          );
+          return;
         }
         final record = {
           'type': widget.type,
@@ -4473,6 +4481,7 @@ class _QuizPageState extends State<QuizPage> {
           'wrongWords': wrongWords,
           'timestamp': DateTime.now().toIso8601String(),
         };
+        await LearningStatsService.saveQuizRecordLocally(record);
         await FirestoreSync.uploadQuizRecord(record);
       } catch (_) {}
 
