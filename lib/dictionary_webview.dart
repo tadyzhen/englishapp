@@ -42,12 +42,13 @@ class _DictionaryWebViewState extends State<DictionaryWebView> {
         : 'https://dictionary.cambridge.org/dictionary/english-chinese-traditional/$encodedWord';
 
     // On web, Cambridge blocks being embedded in an iframe/WebView.
-    // Instead, open in a new browser tab/window and close this page.
+    // Instead, open in a browser window and close this page. Use '_self'
+    // so that mobile browsers are less likely to block it as a popup.
     if (kIsWeb) {
       final uri = Uri.parse(url);
       launchUrl(
         uri,
-        webOnlyWindowName: '_blank',
+        webOnlyWindowName: '_self',
       );
       // Close this route after triggering browser navigation.
       WidgetsBinding.instance.addPostFrameCallback((_) {
