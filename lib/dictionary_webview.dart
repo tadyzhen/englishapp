@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 class DictionaryWebView extends StatefulWidget {
@@ -25,7 +27,8 @@ class _DictionaryWebViewState extends State<DictionaryWebView> {
 
     // ✅ 安全處理單字（避免斜線、多字等造成錯誤）
     // ✅ 移除括號內容 (例如: enhancement(s) -> enhancement)
-    final original = widget.word.trim().toLowerCase().replaceAll(RegExp(r'\(.*\)'), '');
+    final original =
+        widget.word.trim().toLowerCase().replaceAll(RegExp(r'\(.*\)'), '');
     final lookupWord = switch (original) {
       'a/an' => 'a',
       'is/are' => 'is',
@@ -37,6 +40,23 @@ class _DictionaryWebViewState extends State<DictionaryWebView> {
     final url = widget.isEnglishOnly
         ? 'https://dictionary.cambridge.org/dictionary/english/$encodedWord'
         : 'https://dictionary.cambridge.org/dictionary/english-chinese-traditional/$encodedWord';
+
+    // On web, Cambridge blocks being embedded in an iframe/WebView.
+    // Instead, open in a new browser tab/window and close this page.
+    if (kIsWeb) {
+      final uri = Uri.parse(url);
+      launchUrl(
+        uri,
+        webOnlyWindowName: '_blank',
+      );
+      // Close this route after triggering browser navigation.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          Navigator.of(context).pop();
+        }
+      });
+      return;
+    }
 
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
