@@ -3234,10 +3234,10 @@ class _WordListPageState extends State<WordListPage> {
               itemBuilder: (context, index) {
                 final word = widget.words[index];
                 final isKnown = _knownWords.contains(word.english);
-                return GestureDetector(
-                  onTap: () => _speakWord(word.english),
+                return _DictionaryLongPressWrapper(
                   onLongPress: () => _openDictionary(word.english),
                   child: ListTile(
+                    onTap: () => _speakWord(word.english),
                     title: Text(
                       word.english,
                       style:
@@ -5264,19 +5264,19 @@ class _AllWordsPageState extends State<AllWordsPage> {
                 // Get the first part before "/" for dictionary lookup
                 final lookupWord = word.english.split('/').first.trim();
 
-                return ListTile(
-                  title: Text(word.english),
-                  subtitle: Text('等級 ${word.level} - ${word.chinese}'),
-                  onTap: () {
-                    speakWord(word.english);
-                  },
-                  onLongPress: () {
-                    _launchURL(lookupWord);
-                  },
-                  trailing: IconButton(
-                    icon: const Icon(Icons.volume_up, color: Colors.grey),
-                    onPressed: () => speakWord(word.english),
-                    tooltip: '發音',
+                return _DictionaryLongPressWrapper(
+                  onLongPress: () => _launchURL(lookupWord),
+                  child: ListTile(
+                    title: Text(word.english),
+                    subtitle: Text('等級 ${word.level} - ${word.chinese}'),
+                    onTap: () {
+                      speakWord(word.english);
+                    },
+                    trailing: IconButton(
+                      icon: const Icon(Icons.volume_up, color: Colors.grey),
+                      onPressed: () => speakWord(word.english),
+                      tooltip: '發音',
+                    ),
                   ),
                 );
               },
@@ -5284,6 +5284,55 @@ class _AllWordsPageState extends State<AllWordsPage> {
           ),
         ],
       ),
+    );
+  }
+}
+
+// Helper widget to provide consistent long-press behavior (press and hold ~500ms)
+// for opening the dictionary, which works reliably on mobile web as well.
+class _DictionaryLongPressWrapper extends StatefulWidget {
+  final Widget child;
+  final VoidCallback onLongPress;
+
+  const _DictionaryLongPressWrapper({
+    required this.child,
+    required this.onLongPress,
+  });
+
+  @override
+  State<_DictionaryLongPressWrapper> createState() =>
+      _DictionaryLongPressWrapperState();
+}
+
+class _DictionaryLongPressWrapperState
+    extends State<_DictionaryLongPressWrapper> {
+  Timer? _longPressTimer;
+
+  void _handleTapDown(TapDownDetails details) {
+    _longPressTimer?.cancel();
+    _longPressTimer = Timer(const Duration(milliseconds: 500), () {
+      widget.onLongPress();
+    });
+  }
+
+  void _cancelTimer() {
+    _longPressTimer?.cancel();
+  }
+
+  @override
+  void dispose() {
+    _longPressTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onTapDown: _handleTapDown,
+      onTapUp: (_) => _cancelTimer(),
+      onTapCancel: _cancelTimer,
+      child: widget.child,
     );
   }
 }
