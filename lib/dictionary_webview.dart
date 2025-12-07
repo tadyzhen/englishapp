@@ -42,17 +42,28 @@ class _DictionaryWebViewState extends State<DictionaryWebView> {
         : 'https://dictionary.cambridge.org/dictionary/english-chinese-traditional/$encodedWord';
 
     // On web, Cambridge blocks being embedded in an iframe/WebView.
-    // Instead, open in a browser window and close this page. Use '_self'
-    // so that mobile browsers are less likely to block it as a popup.
+    // Instead, open in a new browser tab/window so user can return to the app.
+    // Use '_blank' to open in new tab, preserving the current app state.
     if (kIsWeb) {
       final uri = Uri.parse(url);
+      // Launch URL asynchronously without blocking
       launchUrl(
         uri,
-        webOnlyWindowName: '_self',
-      );
-      // Close this route after triggering browser navigation.
-      WidgetsBinding.instance.addPostFrameCallback((_) {
+        mode: LaunchMode.externalApplication,
+        webOnlyWindowName: '_blank',
+      ).then((_) {
+        // Successfully opened in new tab, close this route
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            Navigator.of(context).pop();
+          }
+        });
+      }).catchError((e) {
+        // If launch fails, show error and close the route
         if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('無法開啟網頁: $e')),
+          );
           Navigator.of(context).pop();
         }
       });
