@@ -20,6 +20,7 @@ class DictionaryWebView extends StatefulWidget {
 class _DictionaryWebViewState extends State<DictionaryWebView> {
   late final WebViewController _controller;
   bool _isLoading = true;
+  bool _webUrlLaunched = false;
 
   @override
   void initState() {
@@ -42,31 +43,10 @@ class _DictionaryWebViewState extends State<DictionaryWebView> {
         : 'https://dictionary.cambridge.org/dictionary/english-chinese-traditional/$encodedWord';
 
     // On web, Cambridge blocks being embedded in an iframe/WebView.
-    // Instead, open in a new browser tab/window so user can return to the app.
-    // Use '_blank' to open in new tab, preserving the current app state.
+    // We'll handle the launch in build() method where we have access to MediaQuery
     if (kIsWeb) {
-      final uri = Uri.parse(url);
-      // Launch URL asynchronously without blocking
-      launchUrl(
-        uri,
-        mode: LaunchMode.externalApplication,
-        webOnlyWindowName: '_blank',
-      ).then((_) {
-        // Successfully opened in new tab, close this route
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) {
-            Navigator.of(context).pop();
-          }
-        });
-      }).catchError((e) {
-        // If launch fails, show error and close the route
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('無法開啟網頁: $e')),
-          );
-          Navigator.of(context).pop();
-        }
-      });
+      // Store URL for later use in build method
+      _webUrlLaunched = false;
       return;
     }
 
@@ -92,8 +72,83 @@ class _DictionaryWebViewState extends State<DictionaryWebView> {
       ..loadRequest(Uri.parse(url));
   }
 
+  void _launchWebUrl(String url) {
+    if (_webUrlLaunched) return;
+    _webUrlLaunched = true;
+
+    final uri = Uri.parse(url);
+    
+    // Detect if running on mobile device by checking screen width
+    // Mobile devices typically have screen width < 600px
+    bool isMobile = false;
+    try {
+      final mediaQuery = MediaQuery.maybeOf(context);
+      if (mediaQuery != null) {
+        isMobile = mediaQuery.size.width < 600 || 
+                   mediaQuery.size.shortestSide < 600;
+      }
+    } catch (_) {
+      // Default to mobile if detection fails (safer for mobile browsers)
+      isMobile = true;
+    }
+    
+    // Launch URL asynchronously without blocking
+    launchUrl(
+      uri,
+      mode: LaunchMode.externalApplication,
+      webOnlyWindowName: isMobile ? '_self' : '_blank',
+    ).then((_) {
+      // Successfully opened, close this route
+      // For mobile, this allows user to use browser back button to return
+      // For desktop, new tab preserves the app state
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          Navigator.of(context).pop();
+        }
+      });
+    }).catchError((e) {
+      // If launch fails, show error and close the route
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('無法開啟網頁: $e')),
+        );
+        Navigator.of(context).pop();
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
+    // Handle web URL launch in build method where we have access to MediaQuery
+    if (kIsWeb && !_webUrlLaunched) {
+      final original =
+          widget.word.trim().toLowerCase().replaceAll(RegExp(r'\(.*\)'), '');
+      final lookupWord = switch (original) {
+        'a/an' => 'a',
+        'is/are' => 'is',
+        'have/has' => 'have',
+        _ => original.contains('/') ? original.split('/').first.trim() : original,
+      };
+      final encodedWord = Uri.encodeComponent(lookupWord);
+      final url = widget.isEnglishOnly
+          ? 'https://dictionary.cambridge.org/dictionary/english/$encodedWord'
+          : 'https://dictionary.cambridge.org/dictionary/english-chinese-traditional/$encodedWord';
+      
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _launchWebUrl(url);
+      });
+    }
+
+    if (kIsWeb) {
+      // Show loading indicator while launching URL
+      return Scaffold(
+        appBar: AppBar(
+          title: Text(widget.word),
+        ),
+        body: const Center(child: CircularProgressIndicator()),
+      );
+    }
+
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.word),
