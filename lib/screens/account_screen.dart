@@ -4,6 +4,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'modern_login_screen.dart';
 import '../main.dart' show SettingsDialog;
 
@@ -191,6 +192,142 @@ class _AccountScreenState extends State<AccountScreen> {
     }
   }
 
+  Future<void> _showFeedbackDialog(BuildContext context) async {
+    final feedbackController = TextEditingController();
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: const Text('意見回饋'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  '請輸入您的意見或建議，我們會盡快回覆您。',
+                  style: TextStyle(fontSize: 14, color: Colors.grey),
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: feedbackController,
+                  decoration: const InputDecoration(
+                    labelText: '意見內容',
+                    hintText: '請輸入您的意見或建議...',
+                    border: OutlineInputBorder(),
+                  ),
+                  maxLines: 6,
+                  minLines: 4,
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () {
+                if (feedbackController.text.trim().isNotEmpty) {
+                  Navigator.of(ctx).pop(true);
+                } else {
+                  ScaffoldMessenger.of(ctx).showSnackBar(
+                    const SnackBar(content: Text('請輸入意見內容')),
+                  );
+                }
+              },
+              child: const Text('發送'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirmed != true) return;
+
+    final feedback = feedbackController.text.trim();
+    if (feedback.isEmpty) return;
+
+    try {
+      final email = Uri.encodeComponent('tady0857@gmail.com');
+      final subject = Uri.encodeComponent('應用程式意見回饋');
+      final body = Uri.encodeComponent(feedback);
+      final mailtoUri = 'mailto:$email?subject=$subject&body=$body';
+
+      final uri = Uri.parse(mailtoUri);
+      if (await canLaunchUrl(uri)) {
+        await launchUrl(uri);
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('已開啟郵件應用程式')),
+        );
+      } else {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('無法開啟郵件應用程式')),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('發送失敗: $e')),
+      );
+    }
+  }
+
+  Future<void> _showAuthorInfo(BuildContext context) async {
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: const Row(
+            children: [
+              Icon(Icons.person, color: Colors.blue),
+              SizedBox(width: 8),
+              Text('作者介紹'),
+            ],
+          ),
+          content: const Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircleAvatar(
+                radius: 40,
+                backgroundColor: Colors.blue,
+                child: Icon(Icons.person, size: 50, color: Colors.white),
+              ),
+              SizedBox(height: 16),
+              Text(
+                '霸道總裁陳泰綻老闆',
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.blue,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              SizedBox(height: 8),
+              Text(
+                '感謝您使用本應用程式！',
+                style: TextStyle(fontSize: 14, color: Colors.grey),
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
+          actions: [
+            FilledButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('關閉'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final user = _user;
@@ -290,6 +427,22 @@ class _AccountScreenState extends State<AccountScreen> {
                 builder: (ctx) => const SettingsDialog(),
               );
             },
+          ),
+          const Divider(),
+          ListTile(
+            leading: const Icon(Icons.feedback_outlined),
+            title: const Text('意見回饋'),
+            subtitle: const Text('提供您的寶貴意見'),
+            trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+            onTap: () => _showFeedbackDialog(context),
+          ),
+          const Divider(),
+          ListTile(
+            leading: const Icon(Icons.person_outline),
+            title: const Text('作者介紹'),
+            subtitle: const Text('關於開發者'),
+            trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+            onTap: () => _showAuthorInfo(context),
           ),
           const Divider(),
           ListTile(
