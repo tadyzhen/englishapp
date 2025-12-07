@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'firestore_sync.dart';
 import 'package:flutter/services.dart' show rootBundle, HapticFeedback;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -2159,41 +2160,58 @@ class _WordQuizPageState extends State<WordQuizPage> {
   }
 
   Future<void> _initTts() async {
-    final settings = SettingsProvider.of(context);
-    await flutterTts.setLanguage("en-US");
-    await flutterTts.setSpeechRate(settings.speechRate);
-    await flutterTts.setPitch(settings.speechPitch);
-    await flutterTts.setVolume(settings.speechVolume);
-    await flutterTts.awaitSpeakCompletion(true);
+    try {
+      final settings = SettingsProvider.of(context);
+      await flutterTts.setLanguage("en-US");
+      await flutterTts.setSpeechRate(settings.speechRate);
+      await flutterTts.setPitch(settings.speechPitch);
+      await flutterTts.setVolume(settings.speechVolume);
+      await flutterTts.awaitSpeakCompletion(true);
 
-    // Configure audio session to not pause background music
-    await flutterTts.setIosAudioCategory(
-      IosTextToSpeechAudioCategory.playback,
-      [
-        IosTextToSpeechAudioCategoryOptions.allowBluetooth,
-        IosTextToSpeechAudioCategoryOptions.allowBluetoothA2DP,
-        IosTextToSpeechAudioCategoryOptions.mixWithOthers,
-      ],
-      IosTextToSpeechAudioMode.spokenAudio,
-    );
+      // Configure audio session to not pause background music (iOS only)
+      if (!kIsWeb) {
+        try {
+          await flutterTts.setIosAudioCategory(
+            IosTextToSpeechAudioCategory.playback,
+            [
+              IosTextToSpeechAudioCategoryOptions.allowBluetooth,
+              IosTextToSpeechAudioCategoryOptions.allowBluetoothA2DP,
+              IosTextToSpeechAudioCategoryOptions.mixWithOthers,
+            ],
+            IosTextToSpeechAudioMode.spokenAudio,
+          );
+        } catch (e) {
+          // Ignore iOS audio category errors on non-iOS platforms
+        }
+      }
 
-    if (settings.ttsVoice != null) {
-      await flutterTts.setVoice(settings.ttsVoice!);
+      if (settings.ttsVoice != null) {
+        try {
+          await flutterTts.setVoice(settings.ttsVoice!);
+        } catch (e) {
+          // Voice setting might fail on web, continue without it
+        }
+      }
+
+      setState(() {
+        ttsReady = true;
+      });
+
+      flutterTts.setCompletionHandler(() {
+        if (mounted) setState(() => isSpeaking = false);
+      });
+      flutterTts.setCancelHandler(() {
+        if (mounted) setState(() => isSpeaking = false);
+      });
+      flutterTts.setErrorHandler((msg) {
+        if (mounted) setState(() => isSpeaking = false);
+      });
+    } catch (e) {
+      // On web, TTS might not initialize immediately, but we can still try to use it
+      setState(() {
+        ttsReady = true;
+      });
     }
-
-    setState(() {
-      ttsReady = true;
-    });
-
-    flutterTts.setCompletionHandler(() {
-      if (mounted) setState(() => isSpeaking = false);
-    });
-    flutterTts.setCancelHandler(() {
-      if (mounted) setState(() => isSpeaking = false);
-    });
-    flutterTts.setErrorHandler((msg) {
-      if (mounted) setState(() => isSpeaking = false);
-    });
   }
 
   @override
@@ -3173,22 +3191,34 @@ class _WordListPageState extends State<WordListPage> {
   }
 
   Future<void> _initTts() async {
-    final settings = SettingsProvider.of(context);
-    await _tts.setLanguage("en-US");
-    await _tts.setSpeechRate(settings.speechRate);
-    await _tts.setPitch(settings.speechPitch);
-    await _tts.setVolume(settings.speechVolume);
-    await _tts.awaitSpeakCompletion(true);
+    try {
+      final settings = SettingsProvider.of(context);
+      await _tts.setLanguage("en-US");
+      await _tts.setSpeechRate(settings.speechRate);
+      await _tts.setPitch(settings.speechPitch);
+      await _tts.setVolume(settings.speechVolume);
+      await _tts.awaitSpeakCompletion(true);
 
-    if (settings.ttsVoice != null) {
-      await _tts.setVoice(settings.ttsVoice!);
+      if (settings.ttsVoice != null) {
+        try {
+          await _tts.setVoice(settings.ttsVoice!);
+        } catch (e) {
+          // Voice setting might fail on web, continue without it
+        }
+      }
+    } catch (e) {
+      // On web, TTS initialization might have issues, but we can still try to use it
     }
   }
 
   Future<void> _speakWord(String word) async {
     final textToSpeak = word.replaceAll('/', ' ');
     if (textToSpeak.trim().isEmpty) return;
-    await _tts.speak(textToSpeak);
+    try {
+      await _tts.speak(textToSpeak);
+    } catch (e) {
+      // On web, TTS might fail silently, but we continue
+    }
   }
 
   Future<void> _openDictionary(String word) async {
@@ -4995,33 +5025,51 @@ class _AllWordsPageState extends State<AllWordsPage> {
   }
 
   Future<void> _initTts() async {
-    final settings = SettingsProvider.of(context);
-    await flutterTts.setLanguage("en-US");
-    await flutterTts.setSpeechRate(settings.speechRate);
-    await flutterTts.setPitch(settings.speechPitch);
-    await flutterTts.setVolume(settings.speechVolume);
-    await flutterTts.awaitSpeakCompletion(true);
+    try {
+      final settings = SettingsProvider.of(context);
+      await flutterTts.setLanguage("en-US");
+      await flutterTts.setSpeechRate(settings.speechRate);
+      await flutterTts.setPitch(settings.speechPitch);
+      await flutterTts.setVolume(settings.speechVolume);
+      await flutterTts.awaitSpeakCompletion(true);
 
-    // Configure audio session to not pause background music
-    await flutterTts.setIosAudioCategory(
-      IosTextToSpeechAudioCategory.playback,
-      [
-        IosTextToSpeechAudioCategoryOptions.allowBluetooth,
-        IosTextToSpeechAudioCategoryOptions.allowBluetoothA2DP,
-        IosTextToSpeechAudioCategoryOptions.mixWithOthers,
-      ],
-      IosTextToSpeechAudioMode.spokenAudio,
-    );
+      // Configure audio session to not pause background music (iOS only)
+      if (!kIsWeb) {
+        try {
+          await flutterTts.setIosAudioCategory(
+            IosTextToSpeechAudioCategory.playback,
+            [
+              IosTextToSpeechAudioCategoryOptions.allowBluetooth,
+              IosTextToSpeechAudioCategoryOptions.allowBluetoothA2DP,
+              IosTextToSpeechAudioCategoryOptions.mixWithOthers,
+            ],
+            IosTextToSpeechAudioMode.spokenAudio,
+          );
+        } catch (e) {
+          // Ignore iOS audio category errors on non-iOS platforms
+        }
+      }
 
-    if (settings.ttsVoice != null) {
-      await flutterTts.setVoice(settings.ttsVoice!);
+      if (settings.ttsVoice != null) {
+        try {
+          await flutterTts.setVoice(settings.ttsVoice!);
+        } catch (e) {
+          // Voice setting might fail on web, continue without it
+        }
+      }
+    } catch (e) {
+      // On web, TTS initialization might have issues, but we can still try to use it
     }
   }
 
   Future<void> speakWord(String word) async {
     final textToSpeak = word.replaceAll('/', ' ');
     if (textToSpeak.trim().isEmpty) return;
-    await flutterTts.speak(textToSpeak);
+    try {
+      await flutterTts.speak(textToSpeak);
+    } catch (e) {
+      // On web, TTS might fail silently, but we continue
+    }
   }
 
   Future<void> _loadAllWords() async {
