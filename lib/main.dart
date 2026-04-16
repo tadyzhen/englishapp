@@ -986,7 +986,7 @@ class _LevelSelectPageState extends State<LevelSelectPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('高嚴凱是給學測7000單'),
+        title: const Text('學測單字王'),
         actions: [
           IconButton(
             icon: const Icon(Icons.book),
@@ -2677,7 +2677,7 @@ class _WordQuizPageState extends State<WordQuizPage> {
   Widget build(BuildContext context) {
     if (isLoading) {
       return Scaffold(
-        appBar: AppBar(title: const Text('高嚴凱是給學測7000單')),
+        appBar: AppBar(title: const Text('學測單字王')),
         body: const Center(child: CircularProgressIndicator()),
       );
     }
@@ -2688,7 +2688,7 @@ class _WordQuizPageState extends State<WordQuizPage> {
     final double cardRadius = 32;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('高嚴凱是給學測7000單')),
+      appBar: AppBar(title: const Text('學測單字王')),
       body: Stack(
         children: [
           // 進度條
