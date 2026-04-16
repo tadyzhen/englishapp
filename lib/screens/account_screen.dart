@@ -466,7 +466,8 @@ class _AccountScreenState extends State<AccountScreen> {
           if (!isGuest) ...[
             ListTile(
               leading: const Icon(Icons.logout, color: Colors.red),
-              title: const Text('登出', style: TextStyle(color: Colors.red)),
+              title: const Text('登出帳號',
+                  style: TextStyle(color: Colors.red)),
               onTap: () => _signOut(context),
             ),
             const Divider(),

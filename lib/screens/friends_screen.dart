@@ -45,6 +45,42 @@ class _FriendsScreenState extends State<FriendsScreen> {
     }
   }
 
+  Future<void> _removeFriend(FriendSummary friend) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('刪除好友'),
+        content: Text('確定要刪除 ${friend.displayName} 嗎？'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('刪除', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    try {
+      await FriendsService.removeFriend(friend.uid);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('已刪除好友 ${friend.displayName}')),
+      );
+      // 重新載入好友列表
+      _loadFriends();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('刪除好友失敗：$e')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -94,7 +130,12 @@ class _FriendsScreenState extends State<FriendsScreen> {
                             _FriendStudyTimeRow(friend: f),
                           ],
                         ),
-                        // 排行榜與詳細資料之後再補
+                        trailing: IconButton(
+                          icon: const Icon(Icons.person_remove,
+                              color: Colors.red),
+                          tooltip: '刪除好友',
+                          onPressed: () => _removeFriend(f),
+                        ),
                       );
                     },
                   )),

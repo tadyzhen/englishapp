@@ -120,7 +120,8 @@ Future<List<String>> _loadReinforcementList(String level) async {
           .map((k, v) => MapEntry(k.toString(), (v as num).toInt())));
   final Set<String> result = {};
   wrong.forEach((w, c) {
-    if (c >= 2) result.add(w);
+    // 加強模式：錯一次就直接加入補強名單
+    if (c >= 1) result.add(w);
   });
   un.forEach((w, c) {
     if (c >= 2) result.add(w);
@@ -4471,7 +4472,17 @@ class _QuizPageState extends State<QuizPage> {
       // Reinforcement: count wrong answers for this session
       try {
         for (final w in _wrongWordsThisQuiz) {
-          await _incrementReinforceCounter(widget.level ?? '1', w, 'wrong');
+          final wordObj = quizWords.firstWhere(
+            (x) => x.english == w,
+            orElse: () => Word(
+              level: widget.level ?? '1',
+              english: w,
+              pos: '',
+              engPos: '',
+              chinese: '',
+            ),
+          );
+          await _incrementReinforceCounter(wordObj.level, w, 'wrong');
         }
       } catch (_) {}
 

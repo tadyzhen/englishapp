@@ -232,6 +232,77 @@ class GroupsService {
     }, SetOptions(merge: true));
   }
 
+  static Future<void> renameGroup({
+    required String groupId,
+    required String newName,
+  }) async {
+    final user = _currentUser;
+    if (user == null) {
+      throw Exception('User not logged in');
+    }
+
+    final groupDoc = await _db.collection('groups').doc(groupId).get();
+    final data = groupDoc.data();
+    if (data == null) {
+      throw Exception('Group not found');
+    }
+
+    final ownerUid = data['ownerUid'] as String?;
+    if (ownerUid != user.uid) {
+      throw Exception('只有群組擁有者可以修改群組名稱');
+    }
+
+    final trimmed = newName.trim();
+    if (trimmed.isEmpty) {
+      throw Exception('群組名稱不可為空');
+    }
+
+    await _db.collection('groups').doc(groupId).set({
+      'name': trimmed,
+    }, SetOptions(merge: true));
+  }
+
+  static Future<void> kickMember({
+    required String groupId,
+    required String targetUid,
+  }) async {
+    final user = _currentUser;
+    if (user == null) {
+      throw Exception('User not logged in');
+    }
+    if (targetUid.isEmpty || targetUid == user.uid) return;
+
+    final groupDoc = await _db.collection('groups').doc(groupId).get();
+    final data = groupDoc.data();
+    if (data == null) {
+      throw Exception('Group not found');
+    }
+
+    final ownerUid = data['ownerUid'] as String?;
+    if (ownerUid != user.uid) {
+      throw Exception('只有群組擁有者可以踢除成員');
+    }
+
+    final memberRef = groupDoc.reference.collection('members').doc(targetUid);
+    final memberSnap = await memberRef.get();
+    if (!memberSnap.exists) {
+      throw Exception('成員不存在');
+    }
+
+    final role = memberSnap.data()?['role'] as String?;
+    if (role == 'owner') {
+      throw Exception('無法踢除群組擁有者');
+    }
+
+    // 1) 移除成員記錄（groups/{groupId}/members/{uid}）
+    await memberRef.delete();
+
+    // 2) 從被踢除者的使用者文件移除該群組 ID
+    await _db.collection('users').doc(targetUid).set({
+      'groups': FieldValue.arrayRemove([groupId]),
+    }, SetOptions(merge: true));
+  }
+
   static Future<String?> getGroupOwnerUid(String groupId) async {
     final doc = await _db.collection('groups').doc(groupId).get();
     final data = doc.data();

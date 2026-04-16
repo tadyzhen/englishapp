@@ -27,6 +27,9 @@ class _GroupDetailScreenState extends State<GroupDetailScreen>
   String? _ownerUid;
   String? _localNickname;
   bool _savingNickname = false;
+  late String _groupName;
+  String? _groupNameDraft;
+  bool _savingGroupName = false;
 
   // 從 user 文件中計算已學單字總數的 helper（邏輯與 FriendsService._extractTotalWordsLearned 一致）
   int _extractTotalWordsLearned(Map<String, dynamic> data) {
@@ -100,6 +103,8 @@ class _GroupDetailScreenState extends State<GroupDetailScreen>
   void initState() {
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
+    _groupName = widget.groupName;
+    _groupNameDraft = widget.groupName;
     _loadGroupMeta();
     _loadLocalNickname();
   }
@@ -203,11 +208,84 @@ class _GroupDetailScreenState extends State<GroupDetailScreen>
     Navigator.pop(context);
   }
 
+  Future<void> _saveGroupName() async {
+    if (_savingGroupName) return;
+    final draft = (_groupNameDraft ?? '').trim();
+    if (draft.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('群組名稱不可為空')),
+      );
+      return;
+    }
+
+    setState(() => _savingGroupName = true);
+    try {
+      await GroupsService.renameGroup(groupId: widget.groupId, newName: draft);
+      if (!mounted) return;
+      setState(() {
+        _groupName = draft;
+        _groupNameDraft = draft;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('已更新群組名稱')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('更新群組名稱失敗：$e')),
+      );
+    } finally {
+      if (mounted) setState(() => _savingGroupName = false);
+    }
+  }
+
+  Future<void> _kickMember({
+    required String targetUid,
+    required String targetDisplayName,
+  }) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('踢除成員'),
+        content: Text('確定踢除「$targetDisplayName」嗎？'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('踢除', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+
+    try {
+      await GroupsService.kickMember(
+        groupId: widget.groupId,
+        targetUid: targetUid,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('已踢除「$targetDisplayName」')),
+      );
+      setState(() {});
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('踢除失敗：$e')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.groupName),
+        title: Text(_groupName),
         bottom: TabBar(
           controller: _tabController,
           tabs: const [
@@ -243,6 +321,8 @@ class _GroupDetailScreenState extends State<GroupDetailScreen>
           return const Center(child: Text('目前沒有成員資料'));
         }
         final memberDocs = snapshot.data!.docs;
+        final currentUid = FirebaseAuth.instance.currentUser?.uid;
+        final canManage = currentUid != null && _ownerUid == currentUid;
         return ListView.separated(
           itemCount: memberDocs.length,
           separatorBuilder: (_, __) => const Divider(height: 1),
@@ -251,6 +331,7 @@ class _GroupDetailScreenState extends State<GroupDetailScreen>
             final uid = m.id;
             final memberData = m.data();
             final memberNickname = (memberData['nickname'] as String?)?.trim();
+            final role = (memberData['role'] as String?) ?? 'member';
             return FutureBuilder<DocumentSnapshot<Map<String, dynamic>>>(
               future:
                   FirebaseFirestore.instance.collection('users').doc(uid).get(),
@@ -282,6 +363,7 @@ class _GroupDetailScreenState extends State<GroupDetailScreen>
                   baseSeconds: todaySeconds,
                   isOnline: isOnline,
                 );
+                final canKick = canManage && role != 'owner' && uid != currentUid;
                 return ListTile(
                   leading: CircleAvatar(
                     child: Text(displayName.isNotEmpty
@@ -302,6 +384,16 @@ class _GroupDetailScreenState extends State<GroupDetailScreen>
                       ),
                     ],
                   ),
+                  trailing: canKick
+                      ? IconButton(
+                          icon: const Icon(Icons.person_remove, color: Colors.red),
+                          tooltip: '踢除成員',
+                          onPressed: () => _kickMember(
+                            targetUid: uid,
+                            targetDisplayName: displayName,
+                          ),
+                        )
+                      : null,
                 );
               },
             );
@@ -511,19 +603,48 @@ class _GroupDetailScreenState extends State<GroupDetailScreen>
                   : const Text('儲存暱稱'),
             ),
           ),
-          const Divider(height: 32),
-          if (isOwner)
+          if (isOwner) ...[
+            const Divider(height: 32),
+            const Text('群組名稱（所有成員可見）'),
+            const SizedBox(height: 8),
+            TextField(
+              controller: TextEditingController(text: _groupNameDraft ?? ''),
+              decoration: const InputDecoration(
+                border: OutlineInputBorder(),
+                hintText: '群組名稱',
+              ),
+              onChanged: (v) => _groupNameDraft = v,
+            ),
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerRight,
+              child: ElevatedButton(
+                onPressed: _savingGroupName ? null : _saveGroupName,
+                child: _savingGroupName
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Text('儲存群組名稱'),
+              ),
+            ),
+            const Divider(height: 32),
             ListTile(
               leading: const Icon(Icons.delete_forever, color: Colors.red),
-              title: const Text('解散群組', style: TextStyle(color: Colors.red)),
+              title: const Text('解散群組',
+                  style: TextStyle(color: Colors.red)),
               onTap: _disbandGroup,
-            )
-          else
+            ),
+          ] else ...[
+            const Divider(height: 32),
             ListTile(
               leading: const Icon(Icons.exit_to_app, color: Colors.red),
-              title: const Text('退出群組', style: TextStyle(color: Colors.red)),
+              title: const Text('退出群組',
+                  style: TextStyle(color: Colors.red)),
               onTap: _leaveGroup,
             ),
+          ],
         ],
       ),
     );
